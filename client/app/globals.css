@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f2f1ee;
+  --surface: #ffffff;
+  --ink: #262626;
+  --muted: #5b5955;
+  --mint: #b4dcc9;
+  --sky: #b2cde7;
+  --peach: #eabdb0;
+  --sun: #edd89a;
+  --lilac: #dccdeb;
+  --ring: #8fbfae;
+  --shadow: rgba(25, 25, 25, 0.06);
+  --shadow-strong: rgba(25, 25, 25, 0.1);
+  --background: var(--bg);
+  --foreground: var(--ink);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), "Trebuchet MS", "Segoe UI", sans-serif;
+  letter-spacing: -0.01em;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(191, 229, 211, 0.6);
+}
+
+@keyframes sched-enter {
+  from { opacity: 0; transform: scaleY(0.8) translateY(-6px); transform-origin: top; }
+  to   { opacity: 1; transform: scaleY(1)   translateY(0);    transform-origin: top; }
+}
+
+.sched-event-enter {
+  animation: sched-enter 0.35s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@keyframes sched-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%       { opacity: 0.9;  }
+}
+
+@keyframes task-check-pop {
+  0%   { background: transparent; border-color: #ccc; transform: scale(1); }
+  45%  { background: #16a34a;    border-color: #16a34a; transform: scale(1.3); }
+  100% { background: #16a34a;    border-color: #16a34a; transform: scale(1); }
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-float {
+  animation: float 7s ease-in-out infinite;
+}
+
+.animate-fade-up {
+  animation: fade-up 0.7s ease-out both;
+}
+
+.onboard-button {
+  padding: 14px 24px;
+  border-radius: 12px;
+  border: none;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.onboard-button--primary {
+  background: #4285f4;
+  color: white;
+}
+
+.onboard-button--secondary {
+  background: transparent;
+  color: #aaa;
+  border: 1px solid #333;
+}
+
+.onboard-button:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 8px 16px rgba(0,0,0,0.35);
+}
+
+.onboard-button:active {
+  transform: translateY(0) scale(1);
+  box-shadow: none;
+}
+
+/* toggle buttons (day/night, social/solo) */
+.onboard-toggle {
+  padding: 1.2rem 1.8rem;
+  border-radius: 12px;
+  border: 2px solid #333;
+  background: #1a1a1a;
+  color: #eee;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.onboard-toggle--active {
+  border-color: #4285f4;
+  background: #252525;
+}
+
+.onboard-toggle:hover {
+  transform: translateY(-1px) scale(1.03);
+}
