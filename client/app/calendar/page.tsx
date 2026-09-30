@@ -891,7 +891,7 @@ export default function CalendarPage() {
           name: t.title,
           priority: (t.priority || 'medium').toLowerCase(),
           requirement: 'optional' as const,
-          durationMinutes: Math.max(1, t.durationMinutes || t.duration || 60),
+          durationMinutes: Math.max(1, t.durationMinutes || t.duration || 30),
           constraints: {
             latestEnd: toLocalISO(effectiveDeadline),
             allowedWindows: [dailyWindow],
@@ -934,7 +934,17 @@ export default function CalendarPage() {
       const placedIds = new Set(result.placements.map((p: any) => p.taskId));
       const unscheduled = pending.filter(t => !placedIds.has(t.id));
       if (unscheduled.length > 0) {
-        const reasons = unscheduled.map(t => `${t.title} (no open slot in the next 7 days)`);
+        const reasons = unscheduled.map(t => {
+          const durationMin = Math.max(1, t.durationMinutes || t.duration || 30);
+          const deadline = t.deadline ? new Date(t.deadline) : null;
+          if (deadline && deadline > now) {
+            const availableMin = Math.round((deadline.getTime() - now.getTime()) / 60000);
+            if (availableMin < durationMin) {
+              return `${t.title} (needs ${durationMin} min but only ${Math.max(availableMin, 0)} min free before its deadline)`;
+            }
+          }
+          return `${t.title} (no open slot in the next 7 days)`;
+        });
         setScheduleError(`Could not schedule: ${reasons.join('; ')}`);
       }
       setScheduleStatus(`${result.placements.length + fixedEvents.length} of ${allPending.length} placed`);
@@ -1131,9 +1141,12 @@ export default function CalendarPage() {
     if (!taskTitle.trim()) { setModalError('Title is required.'); return; }
     if (!userId) { setModalError('Not signed in.'); return; }
     setModalError(null);
+    // A blank duration silently became 0 here but 60 minutes everywhere the scheduler used
+    // it (see autoSchedule) — a task showing "0 min" was actually reserving a full hour,
+    // which could eat up more of a near-term deadline's window than it looked like it should.
     const durationMinutes = taskIsFixedTime && taskFixedStart && taskFixedEnd
       ? Math.max(0, Math.round((new Date(taskFixedEnd).getTime() - new Date(taskFixedStart).getTime()) / 60000))
-      : (Number(taskDuration) || 0);
+      : (Number(taskDuration) || 30);
     const row = {
       title: taskTitle.trim(),
       description: taskDesc.trim(),
