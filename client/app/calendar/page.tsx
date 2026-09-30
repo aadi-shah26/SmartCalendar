@@ -72,6 +72,83 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
   );
 }
 
+const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
+  const h = Math.floor(i / 4);
+  const m = (i % 4) * 15;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+});
+
+function TimePicker({ value, onChange }: { value: string; onChange: (t: string) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setIsOpen(false);
+    }
+    if (isOpen) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !listRef.current) return;
+    const exact = listRef.current.querySelector('[data-selected="true"]');
+    if (exact) {
+      exact.scrollIntoView({ block: 'center' });
+      return;
+    }
+    // Placed times aren't always on a 15-min boundary (the scheduler steps from
+    // whatever "now" was) — scroll to the nearest option instead of defaulting to the top.
+    if (value) {
+      const [h, m] = value.split(':').map(Number);
+      if (!Number.isNaN(h) && !Number.isNaN(m)) {
+        const closestIndex = Math.round((h * 60 + m) / 15);
+        listRef.current.children[closestIndex]?.scrollIntoView({ block: 'center' });
+      }
+    }
+  }, [isOpen, value]);
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(o => !o)}
+        style={{ ...inputStyle, textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+      >
+        <span>{value ? formatEventTime(value) : 'Select time'}</span>
+        <span style={{ color: '#999', fontSize: 10 }}>▾</span>
+      </button>
+      {isOpen && (
+        <div
+          ref={listRef}
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, maxHeight: 220,
+            overflowY: 'auto', background: '#fff', border: '1px solid #e0e0e0', borderRadius: 10,
+            boxShadow: '0 10px 28px rgba(0,0,0,0.14)', zIndex: 200, padding: 4,
+          }}
+        >
+          {TIME_OPTIONS.map(opt => (
+            <div
+              key={opt}
+              data-selected={opt === value}
+              onClick={() => { onChange(opt); setIsOpen(false); }}
+              className="time-option"
+              style={{
+                padding: '8px 12px', fontSize: 13, borderRadius: 6, cursor: 'pointer',
+                background: opt === value ? '#f0f0f0' : 'transparent',
+                fontWeight: opt === value ? 700 : 400,
+              }}
+            >
+              {formatEventTime(opt)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function computeEventLayouts(dayEvents: CalendarEvent[]) {
   type Item = { ev: CalendarEvent; top: number; height: number };
   const items: Item[] = dayEvents
@@ -170,6 +247,17 @@ function formatEventTimeRange(startStr: string, endStr: string) {
   return s.period === e.period
     ? `${sLabel}–${eLabel}${e.period}`
     : `${sLabel}${s.period}–${eLabel}${e.period}`;
+}
+
+function splitDateTime(value: string): { date: string; time: string } {
+  if (!value) return { date: '', time: '' };
+  const [date, time] = value.split('T');
+  return { date: date ?? '', time: (time ?? '').slice(0, 5) };
+}
+
+function joinDateTime(date: string, time: string): string {
+  if (!date || !time) return '';
+  return `${date}T${time}`;
 }
 
 const HOUR_HEIGHT = 60; // px per hour in day/week views
@@ -745,15 +833,6 @@ export default function CalendarPage() {
         };
       });
 
-    const defaultDeadline = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      23,
-      59,
-      59,
-    );
-
     const apiTasks = [...pending]
       .sort((a, b) => String(a.id ?? '').localeCompare(String(b.id ?? '')))
       .map(t => {
@@ -773,10 +852,11 @@ export default function CalendarPage() {
           };
         }
 
+        // No explicit deadline should mean "anytime in the scheduling horizon", not "today only".
         const explicitDeadline = t.deadline ? new Date(t.deadline) : null;
         const effectiveDeadline = explicitDeadline && explicitDeadline > now
           ? explicitDeadline
-          : defaultDeadline;
+          : horizonEnd;
 
         return {
           id: t.id,
@@ -1364,7 +1444,18 @@ export default function CalendarPage() {
                     </div>
                     <div>
                       <label style={labelStyle}>Deadline</label>
-                      <input type="datetime-local" value={taskDeadline} onChange={e => setTaskDeadline(e.target.value)} style={inputStyle} />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 6 }}>
+                        <input
+                          type="date"
+                          value={splitDateTime(taskDeadline).date}
+                          onChange={e => setTaskDeadline(joinDateTime(e.target.value, splitDateTime(taskDeadline).time || '23:59'))}
+                          style={inputStyle}
+                        />
+                        <TimePicker
+                          value={splitDateTime(taskDeadline).time}
+                          onChange={t => setTaskDeadline(joinDateTime(splitDateTime(taskDeadline).date || toDateKey(new Date()), t))}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -1380,11 +1471,33 @@ export default function CalendarPage() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 4 }}>
                       <div>
                         <label style={labelStyle}>Start</label>
-                        <input type="datetime-local" value={taskFixedStart} onChange={e => setTaskFixedStart(e.target.value)} style={inputStyle} />
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 6 }}>
+                          <input
+                            type="date"
+                            value={splitDateTime(taskFixedStart).date}
+                            onChange={e => setTaskFixedStart(joinDateTime(e.target.value, splitDateTime(taskFixedStart).time || '09:00'))}
+                            style={inputStyle}
+                          />
+                          <TimePicker
+                            value={splitDateTime(taskFixedStart).time}
+                            onChange={t => setTaskFixedStart(joinDateTime(splitDateTime(taskFixedStart).date || toDateKey(new Date()), t))}
+                          />
+                        </div>
                       </div>
                       <div>
                         <label style={labelStyle}>End</label>
-                        <input type="datetime-local" value={taskFixedEnd} onChange={e => setTaskFixedEnd(e.target.value)} style={inputStyle} />
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 6 }}>
+                          <input
+                            type="date"
+                            value={splitDateTime(taskFixedEnd).date}
+                            onChange={e => setTaskFixedEnd(joinDateTime(e.target.value, splitDateTime(taskFixedEnd).time || '10:00'))}
+                            style={inputStyle}
+                          />
+                          <TimePicker
+                            value={splitDateTime(taskFixedEnd).time}
+                            onChange={t => setTaskFixedEnd(joinDateTime(splitDateTime(taskFixedEnd).date || toDateKey(new Date()), t))}
+                          />
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1428,11 +1541,11 @@ export default function CalendarPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     <div>
                       <label style={labelStyle}>Start Time</label>
-                      <input type="time" value={formStart} onChange={e => setFormStart(e.target.value)} style={inputStyle} />
+                      <TimePicker value={formStart} onChange={setFormStart} />
                     </div>
                     <div>
                       <label style={labelStyle}>End Time</label>
-                      <input type="time" value={formEnd} onChange={e => setFormEnd(e.target.value)} style={inputStyle} />
+                      <TimePicker value={formEnd} onChange={setFormEnd} />
                     </div>
                   </div>
                   <label style={labelStyle}>Description</label>

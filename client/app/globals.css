@@ -146,3 +146,7 @@ a {
 .onboard-toggle:hover {
   transform: translateY(-1px) scale(1.03);
 }
+
+.time-option:hover {
+  background: #f2f2f2;
+}
