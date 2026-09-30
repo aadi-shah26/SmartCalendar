@@ -758,6 +758,9 @@ export default function CalendarPage() {
 
   function deleteTask(id: string) {
     setTasks(prev => prev.map(item => item.id === id ? { ...item, isDeleted: true } : item));
+    // A task and its calendar block are one thing, not two — remove the block immediately
+    // rather than leaving it stranded on the calendar until the next reshuffle.
+    setEvents(prev => prev.filter(e => e.id !== `sched-${id}`));
     const timer = window.setTimeout(async () => {
       setTasks(prev => prev.filter(item => item.id !== id));
       setUndoInfo(null);
@@ -770,8 +773,12 @@ export default function CalendarPage() {
     if (!undoInfo) return;
     const { id, timer } = undoInfo;
     if (timer) window.clearTimeout(timer);
-    setTasks(prev => prev.map(item => item.id === id ? { ...item, isDeleted: false } : item));
+    const restored = tasks.map(item => item.id === id ? { ...item, isDeleted: false } : item);
+    setTasks(restored);
     setUndoInfo(null);
+    // Pass the restored list explicitly — setTasks above hasn't landed in this closure yet,
+    // so reading `tasks` here would still see the deleted version.
+    autoSchedule(restored);
   }
 
   function formatDeadline(iso?: string | null) {
@@ -1037,7 +1044,11 @@ export default function CalendarPage() {
     const recurrenceData = formRecurrenceType !== 'none'
       ? { type: formRecurrenceType, days: formRecurrenceType === 'weekly' ? formRecurrenceDays : [] }
       : null;
-    const ev = { title: formTitle.trim(), date: formDate, start_time: formStart, end_time: formEnd, description: formDesc, color: formColor, recurrence: recurrenceData, user_id: userId };
+    // Fetch the session fresh rather than trusting the cached userId state, which can go
+    // stale (e.g. session changed in another tab) and get rejected by row-level security.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { setModalError('Not signed in.'); return; }
+    const ev = { title: formTitle.trim(), date: formDate, start_time: formStart, end_time: formEnd, description: formDesc, color: formColor, recurrence: recurrenceData, user_id: session.user.id };
     const { data, error } = await supabase.from('events').insert([ev]).select();
     if (!error && data) {
       setEvents(prev => [...prev, data[0]]);
@@ -1148,7 +1159,11 @@ export default function CalendarPage() {
         setModalError(error?.message ?? 'Failed to update task.');
       }
     } else {
-      const { data, error } = await supabase.from('tasks').insert([{ ...row, user_id: userId }]).select();
+      // Fetch the session fresh rather than trusting the cached userId state, which can go
+      // stale (e.g. session changed in another tab) and get rejected by row-level security.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setModalError('Not signed in.'); return; }
+      const { data, error } = await supabase.from('tasks').insert([{ ...row, user_id: session.user.id }]).select();
       if (!error && data) {
         const newTask = taskFromRow(data[0]);
         setTasks(prev => [newTask, ...prev]);

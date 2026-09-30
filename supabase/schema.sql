@@ -24,7 +24,7 @@ create table if not exists profiles (
 
 create table if not exists events (
   id bigint generated always as identity primary key,
-  user_id uuid references auth.users(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null default auth.uid(),
   title text not null,
   date date not null,
   start_time text,
@@ -37,7 +37,7 @@ create table if not exists events (
 
 create table if not exists tasks (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid references auth.users(id) on delete cascade not null,
+  user_id uuid references auth.users(id) on delete cascade not null default auth.uid(),
   title text not null,
   description text,
   duration_minutes integer default 0,
