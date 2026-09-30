@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '../../lib/supabaseClient';
 
 export default function Onboarding() {
@@ -12,34 +13,46 @@ export default function Onboarding() {
   const [favoriteColor, setFavoriteColor] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [gcalEmail, setGcalEmail] = useState('');
   const [isCompleting, setIsCompleting] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const handleFinish = async () => {
     if (isCompleting) return;
     setIsCompleting(true);
+    setAuthError(null);
 
     try {
-      const { error } = await supabase
-        .from('users')
-        .insert([{
-          name,
-          email,
-          phone,
-          work_time: workTime,
-          work_style: workStyle,
-          theme_color: favoriteColor,
-          gcal_email: gcalEmail,
-        }]);
+      const { data, error } = await supabase.auth.signUp({ email, password });
 
       if (error) {
-        console.error('Error saving user:', error);
-      } else {
-        console.log('User saved!');
+        setAuthError(error.message);
+        setIsCompleting(false);
+        return;
       }
-    } finally {
+
+      const userId = data.user?.id;
+      if (userId) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .insert([{
+            id: userId,
+            name,
+            phone,
+            work_time: workTime,
+            work_style: workStyle,
+            theme_color: favoriteColor,
+            gcal_email: gcalEmail,
+          }]);
+        if (profileError) console.error('Error saving profile:', profileError);
+      }
+
       router.push('/calendar');
+    } catch (err) {
+      setAuthError('Something went wrong. Please try again.');
+      setIsCompleting(false);
     }
   };
 
@@ -75,6 +88,9 @@ export default function Onboarding() {
               </button>
               <button style={socialButtonStyle}>Continue with Google</button>
             </div>
+            <p style={{ ...textStyle, fontSize: '0.9rem', marginTop: '20px', marginBottom: 0 }}>
+              Already have an account? <Link href="/login" style={{ color: '#1a1a1a', fontWeight: 700 }}>Log in</Link>
+            </p>
           </>
         );
       case 2:
@@ -89,9 +105,12 @@ export default function Onboarding() {
       case 3:
         return (
           <>
-            <h2 style={headingStyle}>Email Address</h2>
+            <h2 style={headingStyle}>Email &amp; Password</h2>
             <div style={inputContainerStyle}>
               <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" style={inputStyle} />
+            </div>
+            <div style={inputContainerStyle}>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password (min 6 characters)" style={inputStyle} />
             </div>
           </>
         );
@@ -197,6 +216,7 @@ export default function Onboarding() {
         <div style={contentBodyStyle}>
           <h1 style={stepIndicatorStyle}>Step {step} of {totalSteps}</h1>
           {renderStepContent(step)}
+          {authError && <p style={{ color: '#e53e3e', fontSize: '0.9rem', marginTop: '10px' }}>{authError}</p>}
           {step > 1 && step < totalSteps && (
             <button onClick={() => setStep(step + 1)} style={{ ...nextButtonStyle, marginTop: '22px' }}>
               Continue

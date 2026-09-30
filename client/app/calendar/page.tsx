@@ -1,7 +1,30 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronDown, CircleUserRound, Pencil } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+
+function taskFromRow(row: Record<string, any>): Record<string, any> {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description ?? '',
+    duration: row.duration_minutes ?? 0,
+    durationMinutes: row.duration_minutes ?? 0,
+    priority: row.priority,
+    energyLevel: row.energy_level,
+    deadline: row.deadline,
+    isFixedTime: row.is_fixed_time,
+    fixedStart: row.fixed_start,
+    fixedEnd: row.fixed_end,
+    isSplittable: row.is_splittable,
+    chunkSize: row.is_splittable ? { min: row.chunk_min, max: row.chunk_max } : null,
+    color: row.color,
+    isCompleted: row.is_completed,
+    isDeleted: false,
+    createdAt: row.created_at,
+  };
+}
 
 const THEME_COLOR = '#1a1a1a';
 
@@ -130,6 +153,24 @@ function formatEventTime(timeStr: string) {
   return `${h}:${m} AM`;
 }
 
+function formatEventTimeRange(startStr: string, endStr: string) {
+  const parse = (s: string) => {
+    const [hStr, mStr] = s.split(':');
+    const h = parseInt(hStr, 10);
+    const m = mStr ?? '00';
+    const period = h >= 12 ? 'pm' : 'am';
+    let h12 = h % 12; if (h12 === 0) h12 = 12;
+    return { h12, m, period };
+  };
+  const s = parse(startStr);
+  const e = parse(endStr);
+  const sLabel = s.m === '00' ? `${s.h12}` : `${s.h12}:${s.m}`;
+  const eLabel = e.m === '00' ? `${e.h12}` : `${e.h12}:${e.m}`;
+  return s.period === e.period
+    ? `${sLabel}–${eLabel}${e.period}`
+    : `${sLabel}${s.period}–${eLabel}${e.period}`;
+}
+
 const HOUR_HEIGHT = 60; // px per hour in day/week views
 
 function getEventPosition(ev: CalendarEvent): { top: number; height: number } | null {
@@ -198,11 +239,12 @@ function useNowTop() {
   return nowTop;
 }
 
-function WeekView({ currentDate, events, openAdd, openDetail, isScheduling }: {
+function WeekView({ currentDate, events, openAdd, openDetail, isScheduling, accentColor }: {
   currentDate: Date; events: CalendarEvent[];
   openAdd: (date: string, hour: number) => void;
   openDetail: (ev: CalendarEvent) => void;
   isScheduling?: boolean;
+  accentColor: string;
 }) {
   const weekStart = getWeekStart(currentDate);
   const days = Array.from({ length: 7 }, (_, i) => {
@@ -243,9 +285,9 @@ function WeekView({ currentDate, events, openAdd, openDetail, isScheduling }: {
             <div key={i} style={{ padding: '10px 0', textAlign: 'center', borderLeft: '1px solid #e5e5e5' }}>
               <div style={{ fontSize: '11px', color: '#888', fontWeight: 600, letterSpacing: '0.05em' }}>{DAYS[i]}</div>
               <div style={{
-                fontSize: '22px', fontWeight: 700, color: isToday ? '#fff' : '#1a1a1a',
+                fontSize: '22px', fontWeight: 700, color: isToday ? getTextColor(accentColor) : '#1a1a1a',
                 width: 36, height: 36, borderRadius: '50%',
-                backgroundColor: isToday ? THEME_COLOR : 'transparent',
+                backgroundColor: isToday ? accentColor : 'transparent',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 margin: '4px auto 0'
               }}>{d.getDate()}</div>
@@ -289,7 +331,7 @@ function WeekView({ currentDate, events, openAdd, openDetail, isScheduling }: {
                     </>
                   )}
                   {computeEventLayouts(dayEvents).map(({ ev, top, height, col, totalCols }) => {
-                    const bg = ev.color ?? THEME_COLOR;
+                    const bg = ev.color ?? accentColor;
                     const fg = getTextColor(bg);
                     const isSched = String(ev.id).startsWith('sched-');
                     return (
@@ -319,11 +361,12 @@ function WeekView({ currentDate, events, openAdd, openDetail, isScheduling }: {
   );
 }
 
-function DayView({ currentDate, events, openAdd, openDetail, isScheduling }: {
+function DayView({ currentDate, events, openAdd, openDetail, isScheduling, accentColor }: {
   currentDate: Date; events: CalendarEvent[];
   openAdd: (date: string, hour: number) => void;
   openDetail: (ev: CalendarEvent) => void;
   isScheduling?: boolean;
+  accentColor: string;
 }) {
   const key = toDateKey(currentDate);
   const isToday = key === toDateKey(new Date());
@@ -378,7 +421,7 @@ function DayView({ currentDate, events, openAdd, openDetail, isScheduling }: {
           )}
           {/* Events */}
           {computeEventLayouts(dayEvents).map(({ ev, top, height, col, totalCols }) => {
-            const bg = ev.color ?? THEME_COLOR;
+            const bg = ev.color ?? accentColor;
             const fg = getTextColor(bg);
             const isSched = String(ev.id).startsWith('sched-');
             return (
@@ -405,12 +448,13 @@ function DayView({ currentDate, events, openAdd, openDetail, isScheduling }: {
   );
 }
 
-function MonthView({ currentDate, events, openAdd, openDetail, setCurrentDate, setView }: {
+function MonthView({ currentDate, events, openAdd, openDetail, setCurrentDate, setView, accentColor }: {
   currentDate: Date; events: CalendarEvent[];
   openAdd: (date: string, hour: number) => void;
   openDetail: (ev: CalendarEvent) => void;
   setCurrentDate: (d: Date) => void;
   setView: (v: ViewMode) => void;
+  accentColor: string;
 }) {
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -439,16 +483,16 @@ function MonthView({ currentDate, events, openAdd, openDetail, setCurrentDate, s
               style={{ borderTop: '1px solid #f0f0f0', borderRight: '1px solid #f0f0f0', padding: 6, cursor: 'pointer', minHeight: 90 }}>
               <div style={{
                 width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                backgroundColor: isToday ? THEME_COLOR : 'transparent',
-                color: isToday ? '#fff' : '#1a1a1a', fontSize: 13, fontWeight: 700, marginBottom: 4
+                backgroundColor: isToday ? accentColor : 'transparent',
+                color: isToday ? getTextColor(accentColor) : '#1a1a1a', fontSize: 13, fontWeight: 700, marginBottom: 4
               }}>{day}</div>
               {dayEvents.slice(0, 3).map(ev => {
-                const bg = ev.color ?? THEME_COLOR;
+                const bg = ev.color ?? accentColor;
                 const fg = getTextColor(bg);
                 return (
                   <div key={ev.id} onClick={e => { e.stopPropagation(); openDetail(ev); }}
                     style={{ backgroundColor: bg, color: fg, borderRadius: 4, padding: '1px 5px', fontSize: 11, fontWeight: 600, marginBottom: 2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
-                    {ev.title}
+                    <span style={{ opacity: 0.8, fontWeight: 500 }}>{formatEventTimeRange(ev.start_time, ev.end_time)}</span>{' '}{ev.title}
                   </div>
                 );
               })}
@@ -461,9 +505,10 @@ function MonthView({ currentDate, events, openAdd, openDetail, setCurrentDate, s
   );
 }
 
-function YearView({ currentDate, events, setCurrentDate, setView }: {
+function YearView({ currentDate, events, setCurrentDate, setView, accentColor }: {
   currentDate: Date; events: CalendarEvent[];
   setCurrentDate: (d: Date) => void; setView: (v: ViewMode) => void;
+  accentColor: string;
 }) {
   const year = currentDate.getFullYear();
   const todayKey = toDateKey(new Date());
@@ -490,8 +535,8 @@ function YearView({ currentDate, events, setCurrentDate, setView }: {
                   <div key={i} onClick={() => { setCurrentDate(new Date(year, mi, day)); setView('Day'); }}
                     style={{
                       textAlign: 'center', fontSize: 10, cursor: 'pointer', borderRadius: 3, padding: '1px 0',
-                      backgroundColor: isToday ? THEME_COLOR : hasEvent ? '#e5e5e5' : 'transparent',
-                      color: isToday ? '#fff' : '#1a1a1a', fontWeight: isToday ? 700 : 400
+                      backgroundColor: isToday ? accentColor : hasEvent ? '#e5e5e5' : 'transparent',
+                      color: isToday ? getTextColor(accentColor) : '#1a1a1a', fontWeight: isToday ? 700 : 400
                     }}>{day}</div>
                 );
               })}
@@ -505,6 +550,14 @@ function YearView({ currentDate, events, setCurrentDate, setView }: {
 
 // ── Main Page ──
 export default function CalendarPage() {
+  const router = useRouter();
+  const [userId, setUserId] = useState<string | null>(null);
+  const [accentColor, setAccentColor] = useState(THEME_COLOR);
+  const [profile, setProfile] = useState<Record<string, any> | null>(null);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileDraft, setProfileDraft] = useState<Record<string, any>>({});
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
   const [view, setView] = useState<ViewMode>('Week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [events, setEvents] = useState<CalendarEvent[]>([]);
@@ -558,45 +611,45 @@ export default function CalendarPage() {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
 
   useEffect(() => {
-    const loadEvents = async () => {
-      const { data, error } = await supabase.from('events').select('*');
-      if (!error && data) setEvents(data);
+    const loadUserData = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+      setUserId(session.user.id);
+
+      const { data: eventRows, error: eventsError } = await supabase.from('events').select('*');
+      if (!eventsError && eventRows) setEvents(eventRows);
+
+      const { data: taskRows, error: tasksError } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+      if (!tasksError && taskRows) setTasks(taskRows.map(taskFromRow));
+
+      const { data: profileRow, error: profileError } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle();
+      if (!profileError && profileRow) {
+        setProfile({ ...profileRow, email: session.user.email });
+        if (profileRow.theme_color) setAccentColor(profileRow.theme_color);
+      } else {
+        setProfile({ email: session.user.email });
+      }
     };
-    loadEvents();
-  }, []);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('tasks');
-      if (raw) setTasks(JSON.parse(raw));
-    } catch (e) {}
-  }, []);
-
-  function addTask(t: Record<string, any>) {
-    const withMeta = { ...t, id: t.id ?? t.createdAt ?? new Date().toISOString(), isDeleted: false };
-    setTasks(prev => {
-      const next = [withMeta, ...prev];
-      try { localStorage.setItem('tasks', JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
-    setCreatedMessage(`Saved "${t.title || 'untitled'}"`);
-    setTimeout(() => setCreatedMessage(null), 2500);
-  }
+    loadUserData();
+  }, [router]);
 
   function deleteTask(id: string) {
-    setTasks(prev => {
-      const next = prev.map(item => item.id === id ? { ...item, isDeleted: true } : item);
-      try { localStorage.setItem('tasks', JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
-    setUndoInfo({ id });
-    const timer = window.setTimeout(() => {
-      setTasks(prev => {
-        const next = prev.filter(item => item.id !== id);
-        try { localStorage.setItem('tasks', JSON.stringify(next)); } catch (e) {}
-        return next;
-      });
+    setTasks(prev => prev.map(item => item.id === id ? { ...item, isDeleted: true } : item));
+    const timer = window.setTimeout(async () => {
+      setTasks(prev => prev.filter(item => item.id !== id));
       setUndoInfo(null);
+      await supabase.from('tasks').delete().eq('id', id);
     }, 5000);
     setUndoInfo({ id, timer });
   }
@@ -605,11 +658,7 @@ export default function CalendarPage() {
     if (!undoInfo) return;
     const { id, timer } = undoInfo;
     if (timer) window.clearTimeout(timer);
-    setTasks(prev => {
-      const next = prev.map(item => item.id === id ? { ...item, isDeleted: false } : item);
-      try { localStorage.setItem('tasks', JSON.stringify(next)); } catch (e) {}
-      return next;
-    });
+    setTasks(prev => prev.map(item => item.id === id ? { ...item, isDeleted: false } : item));
     setUndoInfo(null);
   }
 
@@ -628,14 +677,11 @@ export default function CalendarPage() {
 
   function completeTask(id: string) {
     setCompletingTaskId(id);
-    setTimeout(() => {
+    setTimeout(async () => {
       setCompletingTaskId(null);
-      setTasks(prev => {
-        const next = prev.map(item => item.id === id ? { ...item, isCompleted: true } : item);
-        try { localStorage.setItem('tasks', JSON.stringify(next)); } catch (e) {}
-        return next;
-      });
+      setTasks(prev => prev.map(item => item.id === id ? { ...item, isCompleted: true } : item));
       setEvents(prev => prev.filter(e => e.id !== `sched-${id}`));
+      await supabase.from('tasks').update({ is_completed: true }).eq('id', id);
     }, 500);
   }
 
@@ -749,6 +795,28 @@ export default function CalendarPage() {
     setModalError(null);
   }
 
+  async function saveProfile() {
+    if (!userId) return;
+    setProfileSaving(true);
+    const updates = {
+      id: userId,
+      name: profileDraft.name ?? null,
+      phone: profileDraft.phone ?? null,
+      work_time: profileDraft.work_time ?? null,
+      work_style: profileDraft.work_style ?? null,
+      theme_color: profileDraft.theme_color ?? null,
+      gcal_email: profileDraft.gcal_email ?? null,
+    };
+    const { error } = await supabase.from('profiles').upsert(updates);
+    setProfileSaving(false);
+    if (!error) {
+      setProfile((prev: Record<string, any> | null) => ({ ...(prev ?? {}), ...updates }));
+      if (updates.theme_color) setAccentColor(updates.theme_color);
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 2000);
+    }
+  }
+
   function openModal(tab: 'task' | 'event') {
     setModalTab(tab);
     setEditingEventId(null);
@@ -759,9 +827,10 @@ export default function CalendarPage() {
       setTaskEnergyLevel('Medium'); setTaskDeadline('');
       setTaskIsFixedTime(false); setTaskFixedStart(''); setTaskFixedEnd('');
       setTaskIsSplittable(false); setTaskChunkMin(''); setTaskChunkMax('');
+      setTaskColor(accentColor);
     } else {
       setFormTitle(''); setFormDate(toDateKey(currentDate)); setFormStart('09:00'); setFormEnd('10:00'); setFormDesc('');
-      setFormColor('#1a1a1a'); setFormRecurrenceType('none'); setFormRecurrenceDays([]);
+      setFormColor(accentColor); setFormRecurrenceType('none'); setFormRecurrenceDays([]);
     }
     setShowUnifiedModal(true);
   }
@@ -770,7 +839,7 @@ export default function CalendarPage() {
     const endHour = Math.min(hour + 1, 23);
     setFormTitle(''); setFormDate(date);
     setFormStart(formatTimeStr(hour)); setFormEnd(formatTimeStr(endHour)); setFormDesc('');
-    setFormColor('#1a1a1a'); setFormRecurrenceType('none'); setFormRecurrenceDays([]);
+    setFormColor(accentColor); setFormRecurrenceType('none'); setFormRecurrenceDays([]);
     setModalTab('event');
     setEditingEventId(null); setEditingTaskId(null); setModalError(null);
     setShowUnifiedModal(true);
@@ -816,7 +885,7 @@ export default function CalendarPage() {
     const recurrenceData = formRecurrenceType !== 'none'
       ? { type: formRecurrenceType, days: formRecurrenceType === 'weekly' ? formRecurrenceDays : [] }
       : null;
-    const ev = { title: formTitle.trim(), date: formDate, start_time: formStart, end_time: formEnd, description: formDesc, color: formColor, recurrence: recurrenceData };
+    const ev = { title: formTitle.trim(), date: formDate, start_time: formStart, end_time: formEnd, description: formDesc, color: formColor, recurrence: recurrenceData, user_id: userId };
     const { data, error } = await supabase.from('events').insert([ev]).select();
     if (!error && data) {
       setEvents(prev => [...prev, data[0]]);
@@ -856,48 +925,51 @@ export default function CalendarPage() {
     }
   };
 
-  function handleTaskSubmit() {
+  async function handleTaskSubmit() {
     if (!taskTitle.trim()) { setModalError('Title is required.'); return; }
+    if (!userId) { setModalError('Not signed in.'); return; }
     setModalError(null);
     const durationMinutes = taskIsFixedTime && taskFixedStart && taskFixedEnd
       ? Math.max(0, Math.round((new Date(taskFixedEnd).getTime() - new Date(taskFixedStart).getTime()) / 60000))
       : (Number(taskDuration) || 0);
-    const payload = {
+    const row = {
       title: taskTitle.trim(),
       description: taskDesc.trim(),
-      duration: Number(taskDuration) || 0,
-      durationMinutes,
+      duration_minutes: durationMinutes,
       priority: taskPriority,
-      energyLevel: taskEnergyLevel,
+      energy_level: taskEnergyLevel,
       deadline: taskDeadline ? new Date(taskDeadline).toISOString() : null,
-      isFixedTime: taskIsFixedTime,
-      fixedStart: taskIsFixedTime && taskFixedStart ? new Date(taskFixedStart).toISOString() : null,
-      fixedEnd: taskIsFixedTime && taskFixedEnd ? new Date(taskFixedEnd).toISOString() : null,
-      isSplittable: taskIsSplittable,
-      chunkSize: taskIsSplittable ? { min: Number(taskChunkMin) || 0, max: Number(taskChunkMax) || 0 } : null,
+      is_fixed_time: taskIsFixedTime,
+      fixed_start: taskIsFixedTime && taskFixedStart ? new Date(taskFixedStart).toISOString() : null,
+      fixed_end: taskIsFixedTime && taskFixedEnd ? new Date(taskFixedEnd).toISOString() : null,
+      is_splittable: taskIsSplittable,
+      chunk_min: taskIsSplittable ? (Number(taskChunkMin) || 0) : null,
+      chunk_max: taskIsSplittable ? (Number(taskChunkMax) || 0) : null,
       color: taskColor,
     };
     if (editingTaskId) {
-      setTasks(prev => {
-        const next = prev.map(item => item.id === editingTaskId ? { ...item, ...payload } : item);
-        try { localStorage.setItem('tasks', JSON.stringify(next)); } catch (e) {}
-        return next;
-      });
-      closeModal();
+      const { data, error } = await supabase.from('tasks').update(row).eq('id', editingTaskId).select();
+      if (!error && data) {
+        const updated = taskFromRow(data[0]);
+        setTasks(prev => prev.map(item => item.id === editingTaskId ? updated : item));
+        closeModal();
+      } else {
+        setModalError(error?.message ?? 'Failed to update task.');
+      }
     } else {
-      const newId = new Date().toISOString();
-      const newTask = { ...payload, id: newId, createdAt: newId, isDeleted: false, isCompleted: false };
-      setTasks(prev => {
-        const next = [newTask, ...prev];
-        try { localStorage.setItem('tasks', JSON.stringify(next)); } catch (e) {}
-        return next;
-      });
-      setCreatedMessage(`Saved "${payload.title}"`);
-      setTimeout(() => setCreatedMessage(null), 2500);
-      closeModal();
-      // Pass the new task explicitly since setTasks hasn't flushed yet
-      const currentPending = tasks.filter(t => !t.isDeleted && !t.isCompleted);
-      autoSchedule([newTask, ...currentPending]);
+      const { data, error } = await supabase.from('tasks').insert([{ ...row, user_id: userId }]).select();
+      if (!error && data) {
+        const newTask = taskFromRow(data[0]);
+        setTasks(prev => [newTask, ...prev]);
+        setCreatedMessage(`Saved "${newTask.title}"`);
+        setTimeout(() => setCreatedMessage(null), 2500);
+        closeModal();
+        // Pass the new task explicitly since setTasks hasn't flushed yet
+        const currentPending = tasks.filter(t => !t.isDeleted && !t.isCompleted);
+        autoSchedule([newTask, ...currentPending]);
+      } else {
+        setModalError(error?.message ?? 'Failed to save task.');
+      }
     }
   }
 
@@ -964,8 +1036,8 @@ export default function CalendarPage() {
           {(['Day', 'Week', 'Month', 'Year'] as ViewMode[]).map(v => (
             <button key={v} onClick={() => setView(v)} style={{
               padding: '6px 16px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
-              backgroundColor: view === v ? THEME_COLOR : 'transparent',
-              color: view === v ? '#fff' : '#666', transition: 'all 0.15s'
+              backgroundColor: view === v ? accentColor : 'transparent',
+              color: view === v ? getTextColor(accentColor) : '#666', transition: 'all 0.15s'
             }}>{v}</button>
           ))}
         </div>
@@ -1012,11 +1084,23 @@ export default function CalendarPage() {
                 zIndex: 50,
               }}
             >
-              {['Profile', 'Preferences', 'Notifications', 'Help & Support', 'Sign out'].map((item) => (
+              {['Profile', 'Preferences', 'Notifications', 'Help & Support', 'Sign out'].map((item) => {
+                const isEnabled = item === 'Sign out' || item === 'Profile';
+                return (
                 <button
                   key={item}
                   role="menuitem"
                   type="button"
+                  onClick={
+                    item === 'Sign out' ? async () => {
+                      await supabase.auth.signOut();
+                      router.push('/login');
+                    } : item === 'Profile' ? () => {
+                      setIsProfileMenuOpen(false);
+                      setProfileDraft(profile ?? {});
+                      setShowProfileModal(true);
+                    } : undefined
+                  }
                   style={{
                     width: '100%',
                     textAlign: 'left',
@@ -1025,13 +1109,14 @@ export default function CalendarPage() {
                     borderRadius: 8,
                     padding: '8px 10px',
                     fontSize: 13,
-                    color: '#666',
-                    cursor: 'default',
+                    color: isEnabled ? '#1a1a1a' : '#bbb',
+                    cursor: isEnabled ? 'pointer' : 'default',
                   }}
                 >
                   {item}
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -1041,31 +1126,32 @@ export default function CalendarPage() {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Calendar Area */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-          {view === 'Week' && <WeekView currentDate={currentDate} events={displayEvents} openAdd={openAdd} openDetail={openDetail} isScheduling={isScheduling} />}
-          {view === 'Day' && <DayView currentDate={currentDate} events={displayEvents} openAdd={openAdd} openDetail={openDetail} isScheduling={isScheduling} />}
-          {view === 'Month' && <MonthView currentDate={currentDate} events={displayEvents} openAdd={openAdd} openDetail={openDetail} setCurrentDate={setCurrentDate} setView={setView} />}
-          {view === 'Year' && <YearView currentDate={currentDate} events={displayEvents} setCurrentDate={setCurrentDate} setView={setView} />}
+          {view === 'Week' && <WeekView currentDate={currentDate} events={displayEvents} openAdd={openAdd} openDetail={openDetail} isScheduling={isScheduling} accentColor={accentColor} />}
+          {view === 'Day' && <DayView currentDate={currentDate} events={displayEvents} openAdd={openAdd} openDetail={openDetail} isScheduling={isScheduling} accentColor={accentColor} />}
+          {view === 'Month' && <MonthView currentDate={currentDate} events={displayEvents} openAdd={openAdd} openDetail={openDetail} setCurrentDate={setCurrentDate} setView={setView} accentColor={accentColor} />}
+          {view === 'Year' && <YearView currentDate={currentDate} events={displayEvents} setCurrentDate={setCurrentDate} setView={setView} accentColor={accentColor} />}
         </div>
 
         {/* Task Sidebar */}
-        <div style={{ width: 280, borderLeft: '1px solid #e5e5e5', display: 'flex', flexDirection: 'column', background: '#fafafa' }}>
-          <div style={{ padding: '14px 16px 12px', borderBottom: '1px solid #e5e5e5' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-              <span style={{ fontWeight: 700, fontSize: 13, color: '#1a1a1a' }}>
-                Tasks ({tasks.filter(t => !t.isDeleted && !t.isCompleted).length})
+        <div style={{ width: 300, borderLeft: '1px solid #e5e5e5', display: 'flex', flexDirection: 'column', background: '#fafafa' }}>
+          <div style={{ padding: '16px 18px 14px', borderBottom: '1px solid #e5e5e5' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <span style={{ fontWeight: 800, fontSize: 15, color: '#1a1a1a', letterSpacing: '-0.2px' }}>
+                Tasks <span style={{ color: '#999', fontWeight: 600 }}>({tasks.filter(t => !t.isDeleted && !t.isCompleted).length})</span>
               </span>
               <button
                 onClick={() => openModal('task')}
                 style={{
-                  padding: '8px 14px',
-                  borderRadius: 8,
-                  border: '1px solid #1a1a1a',
-                  background: '#1a1a1a',
+                  padding: '9px 16px',
+                  borderRadius: 10,
+                  border: 'none',
+                  background: accentColor,
                   fontSize: 13,
                   fontWeight: 700,
                   cursor: 'pointer',
-                  color: '#fff',
+                  color: getTextColor(accentColor),
                   boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+                  transition: 'transform 0.1s ease',
                 }}>
                 + New Task
               </button>
@@ -1073,7 +1159,7 @@ export default function CalendarPage() {
             <button
               onClick={() => autoSchedule()}
               disabled={isScheduling}
-              style={{ width: '100%', padding: '8px', borderRadius: 8, border: 'none', background: isScheduling ? '#999' : THEME_COLOR, color: '#fff', fontWeight: 700, fontSize: 13, cursor: isScheduling ? 'default' : 'pointer' }}>
+              style={{ width: '100%', padding: '10px', borderRadius: 10, border: `1.5px solid ${isScheduling ? '#ddd' : accentColor}`, background: isScheduling ? '#f0f0f0' : 'transparent', color: isScheduling ? '#999' : accentColor, fontWeight: 700, fontSize: 13, cursor: isScheduling ? 'default' : 'pointer', transition: 'all 0.15s ease' }}>
               {isScheduling ? 'Scheduling…' : '↺ Reshuffle'}
             </button>
             {scheduleStatus && (
@@ -1096,9 +1182,9 @@ export default function CalendarPage() {
                 const isCompleting = completingTaskId === t.id;
                 return (
                 <div key={t.id ?? i} onClick={() => !isCompleting && openEditTask(t)}
-                  style={{ borderRadius: 8, background: '#fff', border: '1px solid #e8e8e8', padding: '8px 10px', display: 'flex', alignItems: 'flex-start', gap: 8,
+                  style={{ borderRadius: 10, background: '#fff', border: '1px solid #e8e8e8', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10,
                     cursor: isCompleting ? 'default' : 'pointer',
-                    transition: 'opacity 0.45s ease, transform 0.45s ease',
+                    transition: 'opacity 0.45s ease, transform 0.45s ease, border-color 0.15s ease, box-shadow 0.15s ease',
                     opacity: isCompleting ? 0 : 1,
                     transform: isCompleting ? 'translateX(16px) scale(0.97)' : 'translateX(0) scale(1)',
                     pointerEvents: isCompleting ? 'none' : 'auto',
@@ -1106,18 +1192,18 @@ export default function CalendarPage() {
                   <button
                     onClick={e => { e.stopPropagation(); if (!isCompleting) completeTask(t.id); }}
                     title="Mark complete"
-                    style={{ width: 18, height: 18, borderRadius: '50%',
-                      border: `1.5px solid ${isCompleting ? '#16a34a' : '#ccc'}`,
-                      background: isCompleting ? '#16a34a' : 'none',
-                      cursor: 'pointer', flexShrink: 0, marginTop: 2,
+                    style={{ width: 28, height: 28, borderRadius: '50%',
+                      border: `2px solid ${isCompleting ? '#16a34a' : '#ccc'}`,
+                      background: isCompleting ? '#16a34a' : '#fff',
+                      cursor: 'pointer', flexShrink: 0,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: isCompleting ? '#fff' : '#888', fontSize: 10,
+                      color: isCompleting ? '#fff' : '#888', fontSize: 14,
                       animation: isCompleting ? 'task-check-pop 0.4s ease forwards' : undefined,
                       transition: 'background 0.2s ease, border-color 0.2s ease',
                     }}>
                     {isCompleting ? '✓' : ''}
                   </button>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: t.color ?? '#1a1a1a', flexShrink: 0, marginTop: 4 }} />
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: t.color ?? '#1a1a1a', flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</div>
                     <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
@@ -1125,8 +1211,8 @@ export default function CalendarPage() {
                       {t.deadline && ` · Due ${formatDeadline(t.deadline)}`}
                     </div>
                   </div>
-                  <button onClick={e => { e.stopPropagation(); openEditTask(t); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 3, borderRadius: 4, flexShrink: 0 }}>
-                    <Pencil style={{ width: 13, height: 13, color: '#888' }} />
+                  <button onClick={e => { e.stopPropagation(); openEditTask(t); }} title="Edit task" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, borderRadius: 6, flexShrink: 0 }}>
+                    <Pencil style={{ width: 15, height: 15, color: '#888' }} />
                   </button>
                 </div>
                 );
@@ -1148,8 +1234,8 @@ export default function CalendarPage() {
         const isEditingTask = editingTaskId !== null;
         const tabStyle = (active: boolean): React.CSSProperties => ({
           padding: '10px 20px', border: 'none', background: 'none', fontWeight: 700, fontSize: 14,
-          color: active ? THEME_COLOR : '#999',
-          borderBottom: active ? `2px solid ${THEME_COLOR}` : '2px solid transparent',
+          color: active ? accentColor : '#999',
+          borderBottom: active ? `2px solid ${accentColor}` : '2px solid transparent',
           cursor: 'pointer', marginBottom: -2,
         });
         return (
@@ -1243,7 +1329,7 @@ export default function CalendarPage() {
                       <button onClick={() => { deleteTask(editingTaskId!); closeModal(); }} style={{ ...cancelBtnStyle, color: '#e53e3e', borderColor: '#e53e3e' }}>Delete</button>
                     )}
                     <button onClick={closeModal} style={cancelBtnStyle}>Cancel</button>
-                    <button onClick={handleTaskSubmit} style={saveBtnStyle}>{isEditingTask ? 'Save Changes' : 'Create Task'}</button>
+                    <button onClick={handleTaskSubmit} style={{ ...saveBtnStyle, backgroundColor: accentColor, color: getTextColor(accentColor) }}>{isEditingTask ? 'Save Changes' : 'Create Task'}</button>
                   </div>
                 </>
               )}
@@ -1283,9 +1369,9 @@ export default function CalendarPage() {
                         <button key={i} type="button"
                           onClick={() => setFormRecurrenceDays(prev => prev.includes(i) ? prev.filter(d => d !== i) : [...prev, i])}
                           style={{ padding: '4px 10px', borderRadius: 20, border: '1px solid',
-                            backgroundColor: formRecurrenceDays.includes(i) ? THEME_COLOR : 'transparent',
-                            borderColor: formRecurrenceDays.includes(i) ? THEME_COLOR : '#e0e0e0',
-                            color: formRecurrenceDays.includes(i) ? '#fff' : '#666',
+                            backgroundColor: formRecurrenceDays.includes(i) ? accentColor : 'transparent',
+                            borderColor: formRecurrenceDays.includes(i) ? accentColor : '#e0e0e0',
+                            color: formRecurrenceDays.includes(i) ? getTextColor(accentColor) : '#666',
                             cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
                           {day}
                         </button>
@@ -1299,7 +1385,7 @@ export default function CalendarPage() {
                       <button onClick={() => deleteEvent(editingEventId!)} style={{ ...cancelBtnStyle, color: '#e53e3e', borderColor: '#e53e3e' }}>Delete</button>
                     )}
                     <button onClick={closeModal} style={cancelBtnStyle}>Cancel</button>
-                    <button onClick={isEditingEvent ? updateEvent : saveEvent} style={saveBtnStyle}>
+                    <button onClick={isEditingEvent ? updateEvent : saveEvent} style={{ ...saveBtnStyle, backgroundColor: accentColor, color: getTextColor(accentColor) }}>
                       {isEditingEvent ? 'Save Changes' : 'Save Event'}
                     </button>
                   </div>
@@ -1309,6 +1395,66 @@ export default function CalendarPage() {
           </div>
         );
       })()}
+
+      {/* Profile Modal */}
+      {showProfileModal && (
+        <div style={overlay} onClick={() => setShowProfileModal(false)}>
+          <div style={{ ...modal, maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%', backgroundColor: accentColor, color: getTextColor(accentColor),
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 700, flexShrink: 0,
+              }}>
+                {(profileDraft.name || profile?.email || '?').charAt(0).toUpperCase()}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ margin: 0, fontWeight: 800, fontSize: 18 }}>{profileDraft.name || 'Your Profile'}</h2>
+                <div style={{ fontSize: 12, color: '#999', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{profile?.email}</div>
+              </div>
+            </div>
+
+            <label style={labelStyle}>Name</label>
+            <input value={profileDraft.name ?? ''} onChange={e => setProfileDraft((d: Record<string, any>) => ({ ...d, name: e.target.value }))} style={inputStyle} placeholder="Full name" />
+
+            <label style={labelStyle}>Phone</label>
+            <input value={profileDraft.phone ?? ''} onChange={e => setProfileDraft((d: Record<string, any>) => ({ ...d, phone: e.target.value }))} style={inputStyle} placeholder="(123) 456-7890" />
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={labelStyle}>Works best</label>
+                <select value={profileDraft.work_time ?? ''} onChange={e => setProfileDraft((d: Record<string, any>) => ({ ...d, work_time: e.target.value }))} style={inputStyle}>
+                  <option value="">—</option>
+                  <option value="day">Daytime</option>
+                  <option value="night">Night Owl</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Work style</label>
+                <select value={profileDraft.work_style ?? ''} onChange={e => setProfileDraft((d: Record<string, any>) => ({ ...d, work_style: e.target.value }))} style={inputStyle}>
+                  <option value="">—</option>
+                  <option value="social">Social</option>
+                  <option value="solo">Solo</option>
+                </select>
+              </div>
+            </div>
+
+            <label style={labelStyle}>Theme color</label>
+            <ColorPicker value={profileDraft.theme_color ?? accentColor} onChange={c => setProfileDraft((d: Record<string, any>) => ({ ...d, theme_color: c }))} />
+
+            <label style={labelStyle}>Google Calendar email</label>
+            <input value={profileDraft.gcal_email ?? ''} onChange={e => setProfileDraft((d: Record<string, any>) => ({ ...d, gcal_email: e.target.value }))} style={inputStyle} placeholder="you@gmail.com" />
+
+            {profileSaved && <div style={{ fontSize: 12, color: '#16a34a', marginTop: 10, fontWeight: 600 }}>Saved!</div>}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button onClick={() => setShowProfileModal(false)} style={cancelBtnStyle}>Close</button>
+              <button onClick={saveProfile} disabled={profileSaving} style={{ ...saveBtnStyle, backgroundColor: accentColor, color: getTextColor(accentColor), opacity: profileSaving ? 0.6 : 1 }}>
+                {profileSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
