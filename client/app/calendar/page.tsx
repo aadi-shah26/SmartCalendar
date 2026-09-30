@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, CircleUserRound, Pencil } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import type { TimeWindow } from '../../lib/scheduler';
 
 function taskFromRow(row: Record<string, any>): Record<string, any> {
   return {
@@ -696,12 +697,39 @@ export default function CalendarPage() {
     const horizonStart = now > eightAM ? now : eightAM;
     const horizonEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 0);
 
+    // Derive a working-hours window and a "prefer these hours" bonus window from the
+    // user's onboarding/profile preference. Unset preference keeps the original broad window.
+    const workTime = profile?.work_time as 'day' | 'night' | undefined;
+    const dailyWindow: TimeWindow =
+      workTime === 'day'
+        ? { kind: 'weekly', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], timeStart: '07:00', timeEnd: '21:00' }
+        : workTime === 'night'
+        ? { kind: 'weekly', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], timeStart: '11:00', timeEnd: '23:59' }
+        : { kind: 'weekly', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], timeStart: '08:00', timeEnd: '23:59' };
+    const preferredWindow: TimeWindow | null =
+      workTime === 'day'
+        ? { kind: 'weekly', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], timeStart: '09:00', timeEnd: '17:00' }
+        : workTime === 'night'
+        ? { kind: 'weekly', daysOfWeek: [0, 1, 2, 3, 4, 5, 6], timeStart: '18:00', timeEnd: '23:59' }
+        : null;
+
+    // A "solo" work style gets breathing room between back-to-back blocks — applied both
+    // between tasks the scheduler places together, and around events already on the calendar.
+    const bufferMinutes = profile?.work_style === 'solo' ? 15 : 0;
+    const bufferMs = bufferMinutes * 60 * 1000;
+
     // Build blackout windows from existing calendar events (not auto-scheduled ones, those get replaced)
-    const existingBlackouts = events
+    const existingBlackouts: TimeWindow[] = events
       .filter(e => !String(e.id).startsWith('sched-'))
       .map(e => {
         const pad = (s: string) => s.length === 5 ? s + ':00' : s;
-        return { kind: 'absolute', start: `${e.date}T${pad(e.start_time)}`, end: `${e.date}T${pad(e.end_time)}` };
+        const start = new Date(`${e.date}T${pad(e.start_time)}`);
+        const end = new Date(`${e.date}T${pad(e.end_time)}`);
+        return {
+          kind: 'absolute' as const,
+          start: new Date(start.getTime() - bufferMs).toISOString(),
+          end: new Date(end.getTime() + bufferMs).toISOString(),
+        };
       });
 
     const defaultDeadline = new Date(
@@ -716,30 +744,38 @@ export default function CalendarPage() {
     const apiTasks = [...pending]
       .sort((a, b) => String(a.id ?? '').localeCompare(String(b.id ?? '')))
       .map(t => {
+        const isFixed = Boolean(t.isFixedTime && t.fixedStart && t.fixedEnd);
+
+        if (isFixed) {
+          return {
+            id: t.id,
+            name: t.title,
+            priority: (t.priority || 'medium').toLowerCase(),
+            requirement: 'optional' as const,
+            durationMinutes: Math.max(1, t.durationMinutes || t.duration || 60),
+            constraints: {
+              allowedWindows: [{ kind: 'absolute' as const, start: t.fixedStart, end: t.fixedEnd }],
+              ...(existingBlackouts.length > 0 ? { blackoutWindows: existingBlackouts } : {}),
+            },
+          };
+        }
+
         const explicitDeadline = t.deadline ? new Date(t.deadline) : null;
         const effectiveDeadline = explicitDeadline && explicitDeadline > now
           ? explicitDeadline
           : defaultDeadline;
 
         return {
-          kind: 'task',
           id: t.id,
-          user_id: 'user-001',
           name: t.title,
-          description: t.description || null,
           priority: (t.priority || 'medium').toLowerCase(),
-          flexibility: 'movable',
-          requirement: 'optional',
-          is_completed: false,
-          created_at: toLocalISO(new Date(t.createdAt || now)),
-          updated_at: toLocalISO(new Date(t.createdAt || now)),
-          duration_minutes: Math.max(1, t.durationMinutes || t.duration || 60),
+          requirement: 'optional' as const,
+          durationMinutes: Math.max(1, t.durationMinutes || t.duration || 60),
           constraints: {
-            latest_end: toLocalISO(effectiveDeadline),
-            allowed_windows: [
-              { kind: 'weekly', days_of_week: [0, 1, 2, 3, 4, 5, 6], time_start: '08:00', time_end: '23:59' },
-            ],
-            ...(existingBlackouts.length > 0 ? { blackout_windows: existingBlackouts } : {}),
+            latestEnd: toLocalISO(effectiveDeadline),
+            allowedWindows: [dailyWindow],
+            ...(preferredWindow ? { preferredWindows: [preferredWindow] } : {}),
+            ...(existingBlackouts.length > 0 ? { blackoutWindows: existingBlackouts } : {}),
           },
         };
       });
@@ -749,8 +785,9 @@ export default function CalendarPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tasks: apiTasks,
-          horizon_start: toLocalISO(horizonStart),
-          horizon_end: toLocalISO(horizonEnd),
+          horizonStart: toLocalISO(horizonStart),
+          horizonEnd: toLocalISO(horizonEnd),
+          bufferMinutes,
         }),
       });
       if (!res.ok) {
@@ -761,10 +798,10 @@ export default function CalendarPage() {
       const newEvents: CalendarEvent[] = result.placements.map((p: any) => {
         const s = new Date(p.start);
         const e = new Date(p.end);
-        const taskColor = pending.find(t => t.id === p.task_id)?.color;
+        const taskColor = pending.find(t => t.id === p.taskId)?.color;
         return {
-          id: `sched-${p.task_id}`,
-          title: p.task_name,
+          id: `sched-${p.taskId}`,
+          title: p.taskName,
           date: toDateKey(s),
           start_time: s.toTimeString().slice(0, 8),
           end_time: e.toTimeString().slice(0, 8),
@@ -773,10 +810,15 @@ export default function CalendarPage() {
         };
       });
       setEvents(prev => [...prev.filter(e => !String(e.id).startsWith('sched-')), ...newEvents]);
-      const placedIds = new Set(result.placements.map((p: any) => p.task_id));
+      const placedIds = new Set(result.placements.map((p: any) => p.taskId));
       const unscheduled = pending.filter(t => !placedIds.has(t.id));
       if (unscheduled.length > 0) {
-        setScheduleError(`Could not schedule: ${unscheduled.map(t => t.title).join(', ')}`);
+        const reasons = unscheduled.map(t =>
+          t.isFixedTime
+            ? `${t.title} (conflicts with an existing event at its fixed time)`
+            : `${t.title} (no open slot in the next 7 days)`
+        );
+        setScheduleError(`Could not schedule: ${reasons.join('; ')}`);
       }
       setScheduleStatus(`${result.placements.length} of ${pending.length} placed`);
     } catch (err: any) {
@@ -901,6 +943,35 @@ export default function CalendarPage() {
       ? { type: formRecurrenceType, days: formRecurrenceType === 'weekly' ? formRecurrenceDays : [] }
       : null;
     const updates = { title: formTitle.trim(), date: formDate, start_time: formStart, end_time: formEnd, description: formDesc, color: formColor, recurrence: recurrenceData };
+
+    const isSchedEvent = editingEventId.startsWith('sched-');
+    if (isSchedEvent) {
+      // Auto-scheduled blocks only ever existed client-side. Editing one and saving
+      // promotes it to a real event and pins the source task to this exact time so
+      // future reshuffles leave it alone.
+      if (!userId) { setModalError('Not signed in.'); return; }
+      const taskId = editingEventId.slice('sched-'.length);
+      const { data, error } = await supabase.from('events').insert([{ ...updates, user_id: userId }]).select();
+      if (error || !data) { setModalError(error?.message ?? 'Failed to save event.'); return; }
+
+      const fixedStartIso = new Date(`${formDate}T${formStart}`).toISOString();
+      const fixedEndIso = new Date(`${formDate}T${formEnd}`).toISOString();
+      const durationMinutes = Math.max(0, Math.round((new Date(fixedEndIso).getTime() - new Date(fixedStartIso).getTime()) / 60000));
+      await supabase.from('tasks').update({
+        is_fixed_time: true,
+        fixed_start: fixedStartIso,
+        fixed_end: fixedEndIso,
+        duration_minutes: durationMinutes,
+      }).eq('id', taskId);
+
+      setEvents(prev => [...prev.filter(e => e.id !== editingEventId), data[0]]);
+      setTasks(prev => prev.map(t => t.id === taskId
+        ? { ...t, isFixedTime: true, fixedStart: fixedStartIso, fixedEnd: fixedEndIso, durationMinutes }
+        : t));
+      closeModal();
+      return;
+    }
+
     const { error } = await supabase.from('events').update(updates).eq('id', editingEventId);
     if (!error) {
       setEvents(prev => prev.map(e => e.id === editingEventId ? { ...e, ...updates } : e));
