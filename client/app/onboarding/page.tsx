@@ -19,7 +19,7 @@ export default function Onboarding() {
   const [isCompleting, setIsCompleting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const handleFinish = async () => {
+  const handleFinish = async (connectGoogle = false) => {
     if (isCompleting) return;
     setIsCompleting(true);
     setAuthError(null);
@@ -49,27 +49,11 @@ export default function Onboarding() {
         if (profileError) console.error('Error saving profile:', profileError);
       }
 
-      router.push('/calendar');
+      router.push(connectGoogle ? '/calendar?connectGoogle=1' : '/calendar');
     } catch (err) {
       setAuthError('Something went wrong. Please try again.');
       setIsCompleting(false);
     }
-  };
-
-  const handleGoogleConnect = () => {
-    const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
-    const redirectUri = `${siteUrl.replace(/\/$/, '')}/api/auth/callback`;
-    const scope = 'https://www.googleapis.com/auth/calendar.readonly';
-    const authUrl =
-      `https://accounts.google.com/o/oauth2/v2/auth` +
-      `?client_id=${clientId}` +
-      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-      `&response_type=code` +
-      `&scope=${encodeURIComponent(scope)}` +
-      `&access_type=offline` +
-      `&prompt=consent`;
-    window.location.href = authUrl;
   };
 
   const renderStepContent = (currentStep: number) => {
@@ -166,7 +150,7 @@ export default function Onboarding() {
             <p style={textStyle}>Connect your Google Calendar to import your events</p>
             <div style={buttonGroupStyle}>
               <button
-                onClick={handleGoogleConnect}
+                onClick={() => handleFinish(true)}
                 style={{
                   ...socialButtonStyle,
                   backgroundColor: '#1a1a1a',
@@ -186,7 +170,7 @@ export default function Onboarding() {
                 Connect Google Calendar
               </button>
               <button
-                onClick={handleFinish}
+                onClick={() => handleFinish()}
                 style={{ ...socialButtonStyle, backgroundColor: '#e5e5e5', color: '#666' }}
               >
                 Skip for now
@@ -231,7 +215,7 @@ export default function Onboarding() {
           ) : <div />}
 
           {step === totalSteps && (
-            <button onClick={handleFinish} style={nextButtonStyle}>Finish</button>
+            <button onClick={() => handleFinish()} style={nextButtonStyle}>Finish</button>
           )}
         </div>
       </div>
