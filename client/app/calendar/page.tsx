@@ -291,7 +291,7 @@ function WeekView({ currentDate, events, openAdd, openDetail, isScheduling }: {
                   {computeEventLayouts(dayEvents).map(({ ev, top, height, col, totalCols }) => {
                     const bg = ev.color ?? THEME_COLOR;
                     const fg = getTextColor(bg);
-                    const isSched = ev.id.startsWith('sched-');
+                    const isSched = String(ev.id).startsWith('sched-');
                     return (
                       <div key={ev.id} onClick={e => { e.stopPropagation(); openDetail(ev); }}
                         className={isSched ? 'sched-event-enter' : undefined}
@@ -380,7 +380,7 @@ function DayView({ currentDate, events, openAdd, openDetail, isScheduling }: {
           {computeEventLayouts(dayEvents).map(({ ev, top, height, col, totalCols }) => {
             const bg = ev.color ?? THEME_COLOR;
             const fg = getTextColor(bg);
-            const isSched = ev.id.startsWith('sched-');
+            const isSched = String(ev.id).startsWith('sched-');
             return (
               <div key={ev.id} onClick={e => { e.stopPropagation(); openDetail(ev); }}
                 className={isSched ? 'sched-event-enter' : undefined}
@@ -652,7 +652,7 @@ export default function CalendarPage() {
 
     // Build blackout windows from existing calendar events (not auto-scheduled ones, those get replaced)
     const existingBlackouts = events
-      .filter(e => !e.id.startsWith('sched-'))
+      .filter(e => !String(e.id).startsWith('sched-'))
       .map(e => {
         const pad = (s: string) => s.length === 5 ? s + ':00' : s;
         return { kind: 'absolute', start: `${e.date}T${pad(e.start_time)}`, end: `${e.date}T${pad(e.end_time)}` };
@@ -726,7 +726,7 @@ export default function CalendarPage() {
           color: taskColor,
         };
       });
-      setEvents(prev => [...prev.filter(e => !e.id.startsWith('sched-')), ...newEvents]);
+      setEvents(prev => [...prev.filter(e => !String(e.id).startsWith('sched-')), ...newEvents]);
       const placedIds = new Set(result.placements.map((p: any) => p.task_id));
       const unscheduled = pending.filter(t => !placedIds.has(t.id));
       if (unscheduled.length > 0) {
@@ -842,7 +842,7 @@ export default function CalendarPage() {
   };
 
   const deleteEvent = async (id: string) => {
-    if (id.startsWith('sched-')) {
+    if (String(id).startsWith('sched-')) {
       setEvents(prev => prev.filter(e => e.id !== id));
       closeModal();
       return;
