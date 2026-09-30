@@ -96,6 +96,46 @@ describe('scheduleTasksGreedy', () => {
     expect(gapMs).toBeGreaterThanOrEqual(15 * 60 * 1000);
   });
 
+  it('schedules a task with an explicit deadline near the deadline, not at the start of the horizon', () => {
+    // This is the exact bug report: a task due at 5:30pm got scheduled at ~3:42pm (the
+    // earliest open moment) instead of anywhere near its actual deadline.
+    const deadline = new Date('2026-09-28T17:30:00');
+    const { placements } = scheduleTasksGreedy(
+      [
+        makeTask({
+          durationMinutes: 30,
+          constraints: { latestEnd: deadline.toISOString() },
+        }),
+      ],
+      horizon
+    );
+    expect(placements).toHaveLength(1);
+    // Should end at (or within a few minutes of) the deadline, not near horizon.startMs.
+    expect(deadline.getTime() - placements[0].interval.endMs).toBeLessThan(15 * 60 * 1000);
+  });
+
+  it('still prefers the earliest slot for a task with no deadline at all', () => {
+    const { placements } = scheduleTasksGreedy([makeTask({ durationMinutes: 30 })], horizon);
+    expect(placements).toHaveLength(1);
+    expect(placements[0].interval.startMs).toBe(horizon.startMs);
+  });
+
+  it('schedules a near-deadline task late and a no-deadline task early, independently, in the same run', () => {
+    const deadline = new Date('2026-09-28T17:30:00');
+    const { placements } = scheduleTasksGreedy(
+      [
+        makeTask({ id: 'urgent', durationMinutes: 30, constraints: { latestEnd: deadline.toISOString() } }),
+        makeTask({ id: 'whenever', durationMinutes: 30 }),
+      ],
+      horizon
+    );
+    expect(placements).toHaveLength(2);
+    const urgent = placements.find(p => p.task.id === 'urgent')!;
+    const whenever = placements.find(p => p.task.id === 'whenever')!;
+    expect(deadline.getTime() - urgent.interval.endMs).toBeLessThan(60 * 60 * 1000);
+    expect(whenever.interval.startMs).toBeLessThan(urgent.interval.startMs);
+  });
+
   it('prefers a later slot inside preferredWindows over an earlier non-preferred one, once the earliness gap is negligible', () => {
     // Long horizon so a 2-hour difference in start time barely moves the earliness
     // score, letting the preferred-window bonus (up to 100pts) decide the outcome.

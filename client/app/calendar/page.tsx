@@ -880,11 +880,13 @@ export default function CalendarPage() {
     const apiTasks = [...pending]
       .sort((a, b) => String(a.id ?? '').localeCompare(String(b.id ?? '')))
       .map(t => {
-        // No explicit deadline should mean "anytime in the scheduling horizon", not "today only".
+        // Only a real, still-future deadline should constrain/anchor placement. allowedWindows
+        // is already clipped to the 7-day horizon (see findAllowedIntervals), so a task with no
+        // deadline needs no separate latestEnd to stay within the horizon — and critically,
+        // sending one here would make the scorer treat it as deadline-bound too (see scoring.ts),
+        // pulling every undated task toward the end of the week instead of scoring it neutrally.
         const explicitDeadline = t.deadline ? new Date(t.deadline) : null;
-        const effectiveDeadline = explicitDeadline && explicitDeadline > now
-          ? explicitDeadline
-          : horizonEnd;
+        const hasRealDeadline = Boolean(explicitDeadline && explicitDeadline > now);
 
         return {
           id: t.id,
@@ -893,7 +895,7 @@ export default function CalendarPage() {
           requirement: 'optional' as const,
           durationMinutes: Math.max(1, t.durationMinutes || t.duration || 30),
           constraints: {
-            latestEnd: toLocalISO(effectiveDeadline),
+            ...(hasRealDeadline ? { latestEnd: toLocalISO(explicitDeadline!) } : {}),
             allowedWindows: [dailyWindow],
             ...(preferredWindow ? { preferredWindows: [preferredWindow] } : {}),
             ...(existingBlackouts.length > 0 ? { blackoutWindows: existingBlackouts } : {}),
