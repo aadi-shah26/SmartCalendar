@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, CircleUserRound, ListChecks, Pencil } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { deleteGoogleEvent, disconnectGoogle, getGoogleStatus, pushGoogleEvent, startGoogleConnect, syncGoogle } from '../../lib/google/client';
 
 function taskFromRow(row: Record<string, any>): Record<string, any> {
   return {
@@ -77,6 +78,7 @@ interface CalendarEvent {
   description: string;
   color?: string;
   recurrence?: { type: 'none' | 'daily' | 'weekly'; days?: number[] } | null;
+  google_event_id?: string | null;
   _recurringBaseId?: string;
 }
 
@@ -739,6 +741,119 @@ export default function CalendarPage() {
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
 
+  // Google Calendar sync
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [googleMessage, setGoogleMessage] = useState<{ text: string; error?: boolean } | null>(null);
+
+  const showGoogleMessage = (text: string, error = false) => {
+    setGoogleMessage({ text, error });
+    window.setTimeout(() => setGoogleMessage(null), 6000);
+  };
+
+  // Re-read events from the database (used after a Google sync). Task-derived 'sched-' blocks
+  // are computed locally, so they are kept as-is.
+  const reloadEvents = async () => {
+    const { data, error } = await supabase.from('events').select('*');
+    if (!error && data) setEvents(prev => [...prev.filter(e => String(e.id).startsWith('sched-')), ...data]);
+  };
+
+  const runGoogleSync = async (quiet = false) => {
+    setGoogleBusy(true);
+    try {
+      const r = await syncGoogle();
+      await reloadEvents();
+      if (!quiet) {
+        showGoogleMessage(
+          r.truncated
+            ? `Synced part of your calendar (${r.imported} events). Sync again to continue.`
+            : `Google Calendar synced (${r.imported} updated, ${r.deleted} removed).`
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Google sync failed.';
+      if (/reconnect/i.test(message)) setGoogleConnected(false);
+      showGoogleMessage(message, true);
+    } finally {
+      setGoogleBusy(false);
+    }
+  };
+
+  const connectGoogle = async () => {
+    setGoogleBusy(true);
+    try {
+      await startGoogleConnect(); // navigates away to Google
+    } catch (err) {
+      showGoogleMessage(err instanceof Error ? err.message : 'Could not start Google connection.', true);
+      setGoogleBusy(false);
+    }
+  };
+
+  const removeGoogle = async () => {
+    setGoogleBusy(true);
+    try {
+      await disconnectGoogle();
+      setGoogleConnected(false);
+      await reloadEvents();
+      showGoogleMessage('Google Calendar disconnected. Your events were kept.');
+    } catch (err) {
+      showGoogleMessage(err instanceof Error ? err.message : 'Could not disconnect.', true);
+    } finally {
+      setGoogleBusy(false);
+    }
+  };
+
+  // Local edits are saved first, then mirrored to Google in the background. A failed mirror
+  // never blocks or rolls back the local change; the next sync reconciles.
+  const mirrorToGoogle = (work: Promise<unknown>) => {
+    if (!googleConnected) return;
+    work.then(() => reloadEvents()).catch(err => showGoogleMessage(`Saved here, but Google update failed: ${err.message}`, true));
+  };
+
+  useEffect(() => {
+    const flash: Record<string, [string, boolean?]> = {
+      connected: ['Google Calendar connected and imported.'],
+      connected_sync_failed: ['Connected, but the first import failed. Try "Sync Google Calendar".', true],
+      denied: ['Google Calendar access was not granted.', true],
+      no_refresh_token: ['Google did not grant offline access. Remove this app at myaccount.google.com/permissions and try again.', true],
+      invalid: ['That Google sign-in link was invalid or expired. Please try again.', true],
+      error: ['Could not connect Google Calendar. Please try again.', true],
+    };
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('google');
+    const wantsConnect = params.get('connectGoogle') === '1';
+    if (result || wantsConnect) window.history.replaceState(null, '', '/calendar');
+    if (result && flash[result]) showGoogleMessage(flash[result][0], !!flash[result][1]);
+
+    let cancelled = false;
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      try {
+        const status = await getGoogleStatus();
+        if (cancelled) return;
+        setGoogleConnected(status.connected);
+        if (status.connected && result !== 'connected') runGoogleSync(true);
+        else if (!status.connected && wantsConnect) connectGoogle();
+      } catch {
+        /* Google sync is optional; the calendar works without it. */
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Pick up changes made in Google while the tab stays open. (Push notifications need a
+  // public HTTPS URL, so polling is what works both locally and when hosted.)
+  useEffect(() => {
+    if (!googleConnected) return;
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') runGoogleSync(true);
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleConnected]);
+
   useEffect(() => {
     const loadUserData = async () => {
       const { data: { session } } = await supabase.auth.getSession();
@@ -934,6 +1049,7 @@ export default function CalendarPage() {
     const { data, error } = await supabase.from('events').insert([ev]).select();
     if (!error && data) {
       setEvents(prev => [...prev, data[0]]);
+      mirrorToGoogle(pushGoogleEvent(data[0].id));
       closeModal();
     } else {
       setModalError(error?.message ?? 'Failed to save event.');
@@ -980,6 +1096,7 @@ export default function CalendarPage() {
     const { error } = await supabase.from('events').update(updates).eq('id', editingEventId);
     if (!error) {
       setEvents(prev => prev.map(e => e.id === editingEventId ? { ...e, ...updates } : e));
+      mirrorToGoogle(pushGoogleEvent(editingEventId));
       closeModal();
     } else {
       setModalError(error?.message ?? 'Failed to update event.');
@@ -1004,9 +1121,11 @@ export default function CalendarPage() {
       closeModal();
       return;
     }
+    const googleEventId = events.find(e => e.id === id)?.google_event_id;
     const { error } = await supabase.from('events').delete().eq('id', id);
     if (!error) {
       setEvents(prev => prev.filter(e => e.id !== id));
+      if (googleEventId) mirrorToGoogle(deleteGoogleEvent(googleEventId));
       closeModal();
     } else {
       setModalError(error?.message ?? 'Failed to delete event.');
@@ -1173,8 +1292,14 @@ export default function CalendarPage() {
                 zIndex: 50,
               }}
             >
-              {['Profile', 'Preferences', 'Notifications', 'Help & Support', 'Sign out'].map((item) => {
-                const isEnabled = item === 'Sign out' || item === 'Profile';
+              {[
+                'Profile',
+                googleConnected ? 'Sync Google Calendar' : 'Connect Google Calendar',
+                ...(googleConnected ? ['Disconnect Google Calendar'] : []),
+                'Preferences', 'Notifications', 'Help & Support', 'Sign out',
+              ].map((item) => {
+                const isGoogleItem = item.includes('Google Calendar');
+                const isEnabled = item === 'Sign out' || item === 'Profile' || (isGoogleItem && !googleBusy);
                 return (
                 <button
                   key={item}
@@ -1188,6 +1313,15 @@ export default function CalendarPage() {
                       setIsProfileMenuOpen(false);
                       setProfileDraft(profile ?? {});
                       setShowProfileModal(true);
+                    } : !isEnabled ? undefined : item === 'Connect Google Calendar' ? () => {
+                      setIsProfileMenuOpen(false);
+                      connectGoogle();
+                    } : item === 'Sync Google Calendar' ? () => {
+                      setIsProfileMenuOpen(false);
+                      runGoogleSync();
+                    } : item === 'Disconnect Google Calendar' ? () => {
+                      setIsProfileMenuOpen(false);
+                      removeGoogle();
                     } : undefined
                   }
                   style={{
@@ -1249,6 +1383,9 @@ export default function CalendarPage() {
 
           {/* Task List */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {googleMessage && (
+              <div role="status" style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 100, maxWidth: 340, borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, boxShadow: '0 6px 20px rgba(0,0,0,0.15)', background: googleMessage.error ? '#fef2f2' : '#f0fdf4', color: googleMessage.error ? '#b91c1c' : '#16a34a' }}>{googleMessage.text}</div>
+            )}
             {createdMessage && (
               <div style={{ borderRadius: 6, background: '#f0fdf4', padding: '6px 10px', fontSize: 12, color: '#16a34a', fontWeight: 600 }}>{createdMessage}</div>
             )}

@@ -1,76 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { google } from 'googleapis';
-import { createClient } from '@supabase/supabase-js';
+import { encryptToken, verifyState } from '@/lib/google/crypto';
+import { getAdminClient, getConnection, getSiteUrl, GOOGLE_SCOPE, newOAuthClient } from '@/lib/google/server';
+import { pullEvents } from '@/lib/google/sync';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
-
+// Google redirects here after consent. Register `<site>/api/auth/callback` as an authorised
+// redirect URI in Google Cloud (once for localhost, once for each hosted domain).
 export async function GET(req: NextRequest) {
-  const { searchParams, origin } = new URL(req.url);
+  const siteUrl = getSiteUrl(req);
+  const back = (result: string) => {
+    const res = NextResponse.redirect(new URL(`/calendar?google=${result}`, siteUrl));
+    res.cookies.delete({ name: 'gcal_oauth_nonce', path: '/api/auth' });
+    return res;
+  };
+
+  const { searchParams } = new URL(req.url);
+  if (searchParams.get('error')) return back('denied');
+
   const code = searchParams.get('code');
-
-  // Must match the redirect_uri sent from the onboarding page exactly.
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || origin;
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    `${siteUrl.replace(/\/$/, '')}/api/auth/callback`
-  );
-
-  if (!code) {
-    return NextResponse.redirect(new URL('/onboarding', req.url));
-  }
+  const state = searchParams.get('state');
+  const payload = state ? verifyState(state) : null;
+  const cookieNonce = req.cookies.get('gcal_oauth_nonce')?.value;
+  if (!code || !payload || !cookieNonce || cookieNonce !== payload.nonce) return back('invalid');
 
   try {
-    // Exchange code for tokens
-    const { tokens } = await oauth2Client.getToken(code);
-    oauth2Client.setCredentials(tokens);
+    const { tokens } = await newOAuthClient(siteUrl).getToken(code);
+    if (!tokens.scope?.split(' ').includes(GOOGLE_SCOPE)) return back('denied'); // calendar box unticked
+    if (!tokens.refresh_token) return back('no_refresh_token');
 
-    // Fetch Google Calendar events
-    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    const now = new Date();
-    const oneYearLater = new Date();
-    oneYearLater.setFullYear(now.getFullYear() + 1);
-
-    const eventsRes = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: now.toISOString(),
-      timeMax: oneYearLater.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-      maxResults: 250,
+    const admin = getAdminClient();
+    const { error } = await admin.from('google_connections').upsert({
+      user_id: payload.uid,
+      refresh_token_enc: encryptToken(tokens.refresh_token),
+      timezone: payload.tz,
+      calendar_id: 'primary',
+      sync_token: null, // a fresh connection always starts with a full import
+      last_synced_at: null,
     });
+    if (error) throw new Error(error.message);
 
-    const googleEvents = eventsRes.data.items || [];
-
-    // Format and insert into Supabase
-    const formattedEvents = googleEvents
-      .filter(e => e.start?.dateTime || e.start?.date)
-      .map(e => {
-        const startDT = e.start?.dateTime
-          ? new Date(e.start.dateTime)
-          : new Date(e.start?.date!);
-        const endDT = e.end?.dateTime
-          ? new Date(e.end.dateTime)
-          : new Date(e.end?.date!);
-        return {
-          title: e.summary || 'Untitled',
-          date: startDT.toISOString().split('T')[0],
-          start_time: startDT.toTimeString().slice(0, 5),
-          end_time: endDT.toTimeString().slice(0, 5),
-          description: e.description || '',
-        };
-      });
-
-    if (formattedEvents.length > 0) {
-      await supabase.from('events').insert(formattedEvents);
+    const conn = await getConnection(admin, payload.uid);
+    if (conn) {
+      try {
+        await pullEvents(admin, siteUrl, conn);
+      } catch (err) {
+        // Connected, but the first import failed: the user can retry with "Sync".
+        console.error('[google] initial import failed', err);
+        return back('connected_sync_failed');
+      }
     }
-
-    return NextResponse.redirect(new URL('/calendar', req.url));
+    return back('connected');
   } catch (err) {
-    console.error('Google OAuth error:', err);
-    return NextResponse.redirect(new URL('/calendar', req.url));
+    console.error('[google] OAuth callback failed', err);
+    return back('error');
   }
 }
