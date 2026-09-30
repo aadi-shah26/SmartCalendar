@@ -58,7 +58,8 @@ export default function Onboarding() {
 
   const handleGoogleConnect = () => {
     const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
-    const redirectUri = 'http://localhost:3000/api/auth/callback';
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || window.location.origin;
+    const redirectUri = `${siteUrl.replace(/\/$/, '')}/api/auth/callback`;
     const scope = 'https://www.googleapis.com/auth/calendar.readonly';
     const authUrl =
       `https://accounts.google.com/o/oauth2/v2/auth` +

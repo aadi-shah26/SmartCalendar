@@ -7,15 +7,17 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  'http://localhost:3000/api/auth/callback'
-);
-
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
+  const { searchParams, origin } = new URL(req.url);
   const code = searchParams.get('code');
+
+  // Must match the redirect_uri sent from the onboarding page exactly.
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || origin;
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    `${siteUrl.replace(/\/$/, '')}/api/auth/callback`
+  );
 
   if (!code) {
     return NextResponse.redirect(new URL('/onboarding', req.url));
