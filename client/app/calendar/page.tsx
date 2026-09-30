@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, CircleUserRound, Pencil } from 'lucide-react';
+import { ChevronDown, CircleUserRound, ListChecks, Pencil } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import type { TimeWindow } from '../../lib/scheduler';
 
@@ -82,6 +82,7 @@ function TimePicker({ value, onChange }: { value: string; onChange: (t: string) 
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const [rotatedOptions, setRotatedOptions] = useState<string[]>(TIME_OPTIONS);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -92,22 +93,15 @@ function TimePicker({ value, onChange }: { value: string; onChange: (t: string) 
   }, [isOpen]);
 
   useEffect(() => {
-    if (!isOpen || !listRef.current) return;
-    const exact = listRef.current.querySelector('[data-selected="true"]');
-    if (exact) {
-      exact.scrollIntoView({ block: 'center' });
-      return;
-    }
-    // Placed times aren't always on a 15-min boundary (the scheduler steps from
-    // whatever "now" was) — scroll to the nearest option instead of defaulting to the top.
-    if (value) {
-      const [h, m] = value.split(':').map(Number);
-      if (!Number.isNaN(h) && !Number.isNaN(m)) {
-        const closestIndex = Math.round((h * 60 + m) / 15);
-        listRef.current.children[closestIndex]?.scrollIntoView({ block: 'center' });
-      }
-    }
-  }, [isOpen, value]);
+    if (!isOpen) return;
+    // Lead with the current time (floored to the nearest 15 min) so the most useful
+    // options are right at the top; the rest of the day follows, wrapping around.
+    const now = new Date();
+    const flooredMin = Math.floor((now.getHours() * 60 + now.getMinutes()) / 15) * 15;
+    const startIndex = flooredMin / 15;
+    setRotatedOptions([...TIME_OPTIONS.slice(startIndex), ...TIME_OPTIONS.slice(0, startIndex)]);
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [isOpen]);
 
   return (
     <div ref={containerRef} style={{ position: 'relative' }}>
@@ -128,7 +122,7 @@ function TimePicker({ value, onChange }: { value: string; onChange: (t: string) 
             boxShadow: '0 10px 28px rgba(0,0,0,0.14)', zIndex: 200, padding: 4,
           }}
         >
-          {TIME_OPTIONS.map(opt => (
+          {rotatedOptions.map(opt => (
             <div
               key={opt}
               data-selected={opt === value}
@@ -426,7 +420,9 @@ function WeekView({ currentDate, events, openAdd, openDetail, isScheduling, acce
                     return (
                       <div key={ev.id} onClick={e => { e.stopPropagation(); openDetail(ev); }}
                         className={isSched ? 'sched-event-enter' : undefined}
+                        title={isSched ? 'From a task' : undefined}
                         style={{ position: 'absolute', backgroundColor: bg, color: fg, borderRadius: 6,
+                          border: isSched ? `1.5px dashed ${fg}` : 'none',
                           left: `calc(${(col / totalCols) * 100}% + 2px)`,
                           width: `calc(${(1 / totalCols) * 100}% - 4px)`,
                           top: top + 1, height: height - 2,
@@ -435,7 +431,10 @@ function WeekView({ currentDate, events, openAdd, openDetail, isScheduling, acce
                           transition: isSched ? 'top 0.5s cubic-bezier(0.4,0,0.2,1), height 0.5s cubic-bezier(0.4,0,0.2,1)' : undefined,
                           animation: isSched && isScheduling ? 'sched-pulse 1s ease-in-out infinite' : undefined,
                         }}>
-                        <div style={{ fontSize: '10px', opacity: 0.75, whiteSpace: 'nowrap' }}>{formatEventTime(ev.start_time)}</div>
+                        <div style={{ fontSize: '10px', opacity: 0.75, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 3 }}>
+                          {isSched && <ListChecks style={{ width: 10, height: 10, flexShrink: 0 }} />}
+                          {formatEventTime(ev.start_time)}
+                        </div>
                         <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
                       </div>
                     );
@@ -516,7 +515,9 @@ function DayView({ currentDate, events, openAdd, openDetail, isScheduling, accen
             return (
               <div key={ev.id} onClick={e => { e.stopPropagation(); openDetail(ev); }}
                 className={isSched ? 'sched-event-enter' : undefined}
+                title={isSched ? 'From a task' : undefined}
                 style={{ position: 'absolute', backgroundColor: bg, color: fg, borderRadius: 8,
+                  border: isSched ? `1.5px dashed ${fg}` : 'none',
                   left: `calc(${(col / totalCols) * 100}% + 4px)`,
                   width: `calc(${(1 / totalCols) * 100}% - 8px)`,
                   top: top + 1, height: height - 2,
@@ -525,7 +526,10 @@ function DayView({ currentDate, events, openAdd, openDetail, isScheduling, accen
                   transition: isSched ? 'top 0.5s cubic-bezier(0.4,0,0.2,1), height 0.5s cubic-bezier(0.4,0,0.2,1)' : undefined,
                   animation: isSched && isScheduling ? 'sched-pulse 1s ease-in-out infinite' : undefined,
                 }}>
-                <div style={{ fontSize: 11, opacity: 0.75, whiteSpace: 'nowrap' }}>{formatEventTime(ev.start_time)} – {formatEventTime(ev.end_time)}</div>
+                <div style={{ fontSize: 11, opacity: 0.75, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  {isSched && <ListChecks style={{ width: 12, height: 12, flexShrink: 0 }} />}
+                  {formatEventTime(ev.start_time)} – {formatEventTime(ev.end_time)}
+                </div>
                 <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
                 {ev.description && height > 54 && <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.description}</div>}
               </div>
@@ -578,9 +582,15 @@ function MonthView({ currentDate, events, openAdd, openDetail, setCurrentDate, s
               {dayEvents.slice(0, 3).map(ev => {
                 const bg = ev.color ?? accentColor;
                 const fg = getTextColor(bg);
+                const isSched = String(ev.id).startsWith('sched-');
                 return (
                   <div key={ev.id} onClick={e => { e.stopPropagation(); openDetail(ev); }}
-                    style={{ backgroundColor: bg, color: fg, borderRadius: 4, padding: '1px 5px', fontSize: 11, fontWeight: 600, marginBottom: 2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                    title={isSched ? 'From a task' : undefined}
+                    style={{ backgroundColor: bg, color: fg, borderRadius: 4, padding: '1px 5px', fontSize: 11, fontWeight: 600, marginBottom: 2,
+                      overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
+                      border: isSched ? `1px dashed ${fg}` : 'none',
+                    }}>
+                    {isSched && <ListChecks style={{ width: 9, height: 9, verticalAlign: -1, marginRight: 2 }} />}
                     <span style={{ opacity: 0.8, fontWeight: 500 }}>{formatEventTimeRange(ev.start_time, ev.end_time)}</span>{' '}{ev.title}
                   </div>
                 );
@@ -788,12 +798,39 @@ export default function CalendarPage() {
   }
 
   async function autoSchedule(pendingOverride?: Array<Record<string, any>>) {
-    const pending = (pendingOverride ?? tasks).filter(t => !t.isDeleted && !t.isCompleted);
-    if (pending.length === 0) { setScheduleError('No tasks to schedule.'); return; }
+    const allPending = (pendingOverride ?? tasks).filter(t => !t.isDeleted && !t.isCompleted);
+    if (allPending.length === 0) { setScheduleError('No tasks to schedule.'); return; }
     setIsScheduling(true);
     setScheduleStatus(null);
     setScheduleError(null);
     const now = new Date();
+
+    // Fixed-time tasks are already decided — they don't go through the solver at all.
+    // (Submitting them would make their own committed slot show up as a "blackout" against
+    // itself on every future run, since existing calendar events are treated as blackouts.)
+    const fixedPending = allPending.filter(t => t.isFixedTime && t.fixedStart && t.fixedEnd);
+    const pending = allPending.filter(t => !(t.isFixedTime && t.fixedStart && t.fixedEnd));
+    const fixedEvents: CalendarEvent[] = fixedPending.map(t => {
+      const s = new Date(t.fixedStart);
+      const e = new Date(t.fixedEnd);
+      return {
+        id: `sched-${t.id}`,
+        title: t.title,
+        date: toDateKey(s),
+        start_time: s.toTimeString().slice(0, 8),
+        end_time: e.toTimeString().slice(0, 8),
+        description: 'Fixed task',
+        color: t.color,
+      };
+    });
+
+    if (pending.length === 0) {
+      setEvents(prev => [...prev.filter(e => !String(e.id).startsWith('sched-')), ...fixedEvents]);
+      setScheduleStatus(`${fixedEvents.length} of ${allPending.length} placed`);
+      setIsScheduling(false);
+      return;
+    }
+
     const eightAM = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 8, 0, 0);
     const horizonStart = now > eightAM ? now : eightAM;
     const horizonEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 0);
@@ -836,22 +873,6 @@ export default function CalendarPage() {
     const apiTasks = [...pending]
       .sort((a, b) => String(a.id ?? '').localeCompare(String(b.id ?? '')))
       .map(t => {
-        const isFixed = Boolean(t.isFixedTime && t.fixedStart && t.fixedEnd);
-
-        if (isFixed) {
-          return {
-            id: t.id,
-            name: t.title,
-            priority: (t.priority || 'medium').toLowerCase(),
-            requirement: 'optional' as const,
-            durationMinutes: Math.max(1, t.durationMinutes || t.duration || 60),
-            constraints: {
-              allowedWindows: [{ kind: 'absolute' as const, start: t.fixedStart, end: t.fixedEnd }],
-              ...(existingBlackouts.length > 0 ? { blackoutWindows: existingBlackouts } : {}),
-            },
-          };
-        }
-
         // No explicit deadline should mean "anytime in the scheduling horizon", not "today only".
         const explicitDeadline = t.deadline ? new Date(t.deadline) : null;
         const effectiveDeadline = explicitDeadline && explicitDeadline > now
@@ -902,18 +923,14 @@ export default function CalendarPage() {
           color: taskColor,
         };
       });
-      setEvents(prev => [...prev.filter(e => !String(e.id).startsWith('sched-')), ...newEvents]);
+      setEvents(prev => [...prev.filter(e => !String(e.id).startsWith('sched-')), ...fixedEvents, ...newEvents]);
       const placedIds = new Set(result.placements.map((p: any) => p.taskId));
       const unscheduled = pending.filter(t => !placedIds.has(t.id));
       if (unscheduled.length > 0) {
-        const reasons = unscheduled.map(t =>
-          t.isFixedTime
-            ? `${t.title} (conflicts with an existing event at its fixed time)`
-            : `${t.title} (no open slot in the next 7 days)`
-        );
+        const reasons = unscheduled.map(t => `${t.title} (no open slot in the next 7 days)`);
         setScheduleError(`Could not schedule: ${reasons.join('; ')}`);
       }
-      setScheduleStatus(`${result.placements.length} of ${pending.length} placed`);
+      setScheduleStatus(`${result.placements.length + fixedEvents.length} of ${allPending.length} placed`);
     } catch (err: any) {
       setScheduleError(err.message || 'Scheduler unavailable');
     } finally {
@@ -1039,27 +1056,29 @@ export default function CalendarPage() {
 
     const isSchedEvent = editingEventId.startsWith('sched-');
     if (isSchedEvent) {
-      // Auto-scheduled blocks only ever existed client-side. Editing one and saving
-      // promotes it to a real event and pins the source task to this exact time so
-      // future reshuffles leave it alone.
+      // Auto-scheduled blocks are derived straight from their task, not a real row — editing
+      // one and saving pins the source task to this exact time (updated in place, no separate
+      // event row) so future reshuffles leave it alone instead of trying to re-place it.
       if (!userId) { setModalError('Not signed in.'); return; }
       const taskId = editingEventId.slice('sched-'.length);
-      const { data, error } = await supabase.from('events').insert([{ ...updates, user_id: userId }]).select();
-      if (error || !data) { setModalError(error?.message ?? 'Failed to save event.'); return; }
 
       const fixedStartIso = new Date(`${formDate}T${formStart}`).toISOString();
       const fixedEndIso = new Date(`${formDate}T${formEnd}`).toISOString();
       const durationMinutes = Math.max(0, Math.round((new Date(fixedEndIso).getTime() - new Date(fixedStartIso).getTime()) / 60000));
-      await supabase.from('tasks').update({
+      const { error } = await supabase.from('tasks').update({
+        title: updates.title,
+        description: updates.description,
+        color: updates.color,
         is_fixed_time: true,
         fixed_start: fixedStartIso,
         fixed_end: fixedEndIso,
         duration_minutes: durationMinutes,
       }).eq('id', taskId);
+      if (error) { setModalError(error.message); return; }
 
-      setEvents(prev => [...prev.filter(e => e.id !== editingEventId), data[0]]);
+      setEvents(prev => prev.map(e => e.id === editingEventId ? { ...e, ...updates } : e));
       setTasks(prev => prev.map(t => t.id === taskId
-        ? { ...t, isFixedTime: true, fixedStart: fixedStartIso, fixedEnd: fixedEndIso, durationMinutes }
+        ? { ...t, title: updates.title, description: updates.description, color: updates.color, isFixedTime: true, fixedStart: fixedStartIso, fixedEnd: fixedEndIso, durationMinutes, duration: durationMinutes }
         : t));
       closeModal();
       return;
@@ -1076,7 +1095,15 @@ export default function CalendarPage() {
 
   const deleteEvent = async (id: string) => {
     if (String(id).startsWith('sched-')) {
+      const taskId = id.slice('sched-'.length);
+      const task = tasks.find(t => t.id === taskId);
       setEvents(prev => prev.filter(e => e.id !== id));
+      // A fixed task's block is derived straight from its pinned time, so just removing the
+      // block would leave it reappearing unchanged on the next reshuffle — clear the pin too.
+      if (task?.isFixedTime) {
+        await supabase.from('tasks').update({ is_fixed_time: false, fixed_start: null, fixed_end: null }).eq('id', taskId);
+        setTasks(prev => prev.map(t => t.id === taskId ? { ...t, isFixedTime: false, fixedStart: null, fixedEnd: null } : t));
+      }
       closeModal();
       return;
     }
