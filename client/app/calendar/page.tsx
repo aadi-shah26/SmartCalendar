@@ -645,6 +645,19 @@ export default function CalendarPage() {
     loadUserData();
   }, [router]);
 
+  // Tasks only ever show up on the calendar after a scheduling run, and that run's
+  // result lived only in memory (never persisted) — so a fresh page load always used
+  // to start with an empty-looking calendar until you clicked Reshuffle. Run it once,
+  // automatically, as soon as the user's data is loaded.
+  const hasAutoScheduledOnLoad = useRef(false);
+  useEffect(() => {
+    if (!userId || hasAutoScheduledOnLoad.current) return;
+    const pending = tasks.filter(t => !t.isDeleted && !t.isCompleted);
+    if (pending.length === 0) return;
+    hasAutoScheduledOnLoad.current = true;
+    autoSchedule();
+  }, [userId, tasks]);
+
   function deleteTask(id: string) {
     setTasks(prev => prev.map(item => item.id === id ? { ...item, isDeleted: true } : item));
     const timer = window.setTimeout(async () => {
