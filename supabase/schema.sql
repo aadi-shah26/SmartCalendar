@@ -100,3 +100,9 @@ create table if not exists google_connections (
 );
 
 alter table google_connections enable row level security;
+
+
+-- ---------------------------------------------------------------------------
+-- Smart scheduling: planned work sessions for a task, as [{ "start": iso, "end": iso }, ...]
+-- ---------------------------------------------------------------------------
+alter table tasks add column if not exists sessions jsonb not null default '[]'::jsonb;

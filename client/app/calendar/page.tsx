@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { ChevronDown, CircleUserRound, ListChecks, Pencil } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { deleteGoogleEvent, disconnectGoogle, getGoogleStatus, pushGoogleEvent, startGoogleConnect, syncGoogle } from '../../lib/google/client';
+import { planSessions, prefsForWorkTime, PLANNING_HORIZON_DAYS, type PlannerTask, type PlanResult } from '../../lib/scheduler';
 
 function taskFromRow(row: Record<string, any>): Record<string, any> {
   return {
@@ -24,18 +25,19 @@ function taskFromRow(row: Record<string, any>): Record<string, any> {
     isCompleted: row.is_completed,
     isDeleted: false,
     createdAt: row.created_at,
+    sessions: Array.isArray(row.sessions) ? row.sessions : [],
   };
 }
 
-// A task's calendar entry, derived directly from the task's own fields. Fixed start/end
-// (time the user committed to) renders as a real block; otherwise a task with a deadline is
-// a fixed-size pill at the due time — its duration is shown as text, not as block height,
-// so long tasks don't look like booked time. A task with neither lives only in the list.
-function computeTaskCalendarEvent(t: Record<string, any>): CalendarEvent | null {
+// A task's calendar entries, derived directly from the task's own fields. Fixed start/end
+// (time the user committed to) renders as a real block. Otherwise a deadline is a fixed-size
+// pill at the due time, and each planned work session is its own (striped) block. All ids
+// start with "sched-" + task id; sessions add "~s<n>" so they stay unique.
+function computeTaskCalendarEvents(t: Record<string, any>): CalendarEvent[] {
   if (t.isFixedTime && t.fixedStart && t.fixedEnd) {
     const s = new Date(t.fixedStart);
     const e = new Date(t.fixedEnd);
-    return {
+    return [{
       id: `sched-${t.id}`,
       title: t.title,
       date: toDateKey(s),
@@ -43,13 +45,14 @@ function computeTaskCalendarEvent(t: Record<string, any>): CalendarEvent | null 
       end_time: e.toTimeString().slice(0, 8),
       description: 'Fixed task',
       color: t.color,
-    };
+    }];
   }
 
+  const out: CalendarEvent[] = [];
   if (t.deadline) {
     const due = new Date(t.deadline);
     const dueTime = due.toTimeString().slice(0, 8);
-    return {
+    out.push({
       id: `sched-${t.id}`,
       title: t.title,
       date: toDateKey(due),
@@ -59,10 +62,28 @@ function computeTaskCalendarEvent(t: Record<string, any>): CalendarEvent | null 
       color: t.color,
       isTaskDue: true,
       taskDurationMin: t.durationMinutes || t.duration || 0,
-    };
+    });
   }
+  (t.sessions ?? []).forEach((sess: { start: string; end: string }, i: number) => {
+    const s = new Date(sess.start);
+    const e = new Date(sess.end);
+    if (!(e > s)) return;
+    out.push({
+      id: `sched-${t.id}~s${i}`,
+      title: t.title,
+      date: toDateKey(s),
+      start_time: s.toTimeString().slice(0, 8),
+      end_time: e.toTimeString().slice(0, 8),
+      description: 'Work session',
+      color: t.color,
+      isTaskSession: true,
+    });
+  });
+  return out;
+}
 
-  return null;
+function taskIdFromCalendarId(id: string): string {
+  return String(id).slice('sched-'.length).split('~')[0];
 }
 
 const THEME_COLOR = '#1a1a1a';
@@ -81,6 +102,7 @@ interface CalendarEvent {
   google_event_id?: string | null;
   _recurringBaseId?: string;
   isTaskDue?: boolean;
+  isTaskSession?: boolean;
   taskDurationMin?: number;
 }
 
@@ -297,6 +319,9 @@ function joinDateTime(date: string, time: string): string {
 
 const HOUR_HEIGHT = 60; // px per hour in day/week views
 const TASK_PILL_HEIGHT = 22;
+const SESSION_STRIPES: React.CSSProperties = {
+  backgroundImage: 'repeating-linear-gradient(135deg, rgba(255,255,255,0.45) 0 6px, transparent 6px 12px)',
+};
 
 function formatDuration(min: number) {
   if (min < 60) return `${min}m`;
@@ -500,6 +525,7 @@ function WeekView({ currentDate, events, openAdd, openDetail, accentColor }: {
                         title={isSched ? 'From a task' : undefined}
                         style={{ position: 'absolute', backgroundColor: bg, color: fg, borderRadius: 6,
                           border: isSched ? `1.5px dashed ${fg}` : 'none',
+                          ...(ev.isTaskSession ? SESSION_STRIPES : {}),
                           left: `calc(${(col / totalCols) * 100}% + 2px)`,
                           width: `calc(${(1 / totalCols) * 100}% - 4px)`,
                           top: top + 1, height: height - 2,
@@ -595,6 +621,7 @@ function DayView({ currentDate, events, openAdd, openDetail, accentColor }: {
                 title={isSched ? 'From a task' : undefined}
                 style={{ position: 'absolute', backgroundColor: bg, color: fg, borderRadius: 8,
                   border: isSched ? `1.5px dashed ${fg}` : 'none',
+                          ...(ev.isTaskSession ? SESSION_STRIPES : {}),
                   left: `calc(${(col / totalCols) * 100}% + 4px)`,
                   width: `calc(${(1 / totalCols) * 100}% - 8px)`,
                   top: top + 1, height: height - 2,
@@ -665,6 +692,7 @@ function MonthView({ currentDate, events, openAdd, openDetail, setCurrentDate, s
                     style={{ backgroundColor: bg, color: fg, borderRadius: 4, padding: '1px 5px', fontSize: 11, fontWeight: 600, marginBottom: 2,
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
                       border: isSched ? `1px dashed ${fg}` : 'none',
+                      ...(ev.isTaskSession ? SESSION_STRIPES : {}),
                     }}>
                     {isSched && <ListChecks style={{ display: 'inline-block', width: 9, height: 9, verticalAlign: -1, marginRight: 2 }} />}
                     <span style={{ opacity: 0.8, fontWeight: 500 }}>{ev.isTaskDue ? `Due ${formatEventTime(ev.start_time)}` : formatEventTimeRange(ev.start_time, ev.end_time)}</span>{' '}{ev.title}
@@ -778,6 +806,8 @@ export default function CalendarPage() {
   // Tasks
   const [tasks, setTasks] = useState<Array<Record<string, any>>>([]);
   const [createdMessage, setCreatedMessage] = useState<string | null>(null);
+  const [planMessage, setPlanMessage] = useState<{ text: string; error?: boolean } | null>(null);
+  const [planning, setPlanning] = useState(false);
   const [undoInfo, setUndoInfo] = useState<{ id: string; timer?: number } | null>(null);
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -929,16 +959,12 @@ export default function CalendarPage() {
     loadUserData();
   }, [router]);
 
-  // A task's calendar block is derived straight from its own fields — due at its deadline,
-  // or at its fixed start/end if set — recomputed automatically whenever tasks change. No
-  // scheduling, no optimization, no network call: a task and its calendar block are one
-  // thing, kept in sync declaratively instead of by remembering to call something after
-  // every edit (which is exactly how that stayed broken before).
+  // A task's calendar entries are derived straight from its own fields (including its saved
+  // work sessions) and recomputed whenever tasks change, so the calendar can't drift from them.
   useEffect(() => {
     const derived = tasks
       .filter(t => !t.isDeleted && !t.isCompleted)
-      .map(computeTaskCalendarEvent)
-      .filter((e): e is CalendarEvent => e !== null);
+      .flatMap(computeTaskCalendarEvents);
     setEvents(prev => [...prev.filter(e => !String(e.id).startsWith('sched-')), ...derived]);
   }, [tasks]);
 
@@ -981,6 +1007,92 @@ export default function CalendarPage() {
       setTasks(prev => prev.map(item => item.id === id ? { ...item, isCompleted: true } : item));
       await supabase.from('tasks').update({ is_completed: true }).eq('id', id);
     }, 500);
+  }
+
+  // ── Smart scheduling ──
+
+  const isPlannable = (t: Record<string, any>) =>
+    !t.isDeleted && !t.isCompleted && !t.isFixedTime && (Number(t.durationMinutes ?? t.duration) || 0) > 0;
+
+  const toPlannerTask = (t: Record<string, any>): PlannerTask => ({
+    id: String(t.id),
+    durationMinutes: Number(t.durationMinutes ?? t.duration) || 0,
+    deadlineMs: t.deadline ? new Date(t.deadline).getTime() : null,
+    priority: t.priority ?? 'Medium',
+    energyLevel: t.energyLevel ?? 'Medium',
+    chunk: t.isSplittable && t.chunkSize?.max > 0 ? { min: Number(t.chunkSize.min) || 0, max: Number(t.chunkSize.max) } : null,
+  });
+
+  // Everything already occupying time: events (recurring ones expanded), fixed-time tasks and the
+  // sessions of every task that isn't being re-planned. All-day events don't block time.
+  function busyIntervals(taskList: Record<string, any>[], replanning: Set<string>) {
+    const now = Date.now();
+    const realEvents = events.filter(e => !String(e.id).startsWith('sched-'));
+    const expanded = expandEvents(realEvents, new Date(now - 86_400_000), new Date(now + (PLANNING_HORIZON_DAYS + 2) * 86_400_000));
+    const busy: { startMs: number; endMs: number }[] = [];
+    for (const ev of expanded) {
+      if (!ev.start_time || !ev.end_time) continue;
+      if (ev.start_time.startsWith('00:00') && ev.end_time.startsWith('23:59')) continue;
+      const startMs = new Date(`${ev.date}T${ev.start_time.slice(0, 5)}`).getTime();
+      const endMs = new Date(`${ev.date}T${ev.end_time.slice(0, 5)}`).getTime();
+      if (endMs > startMs) busy.push({ startMs, endMs });
+    }
+    for (const t of taskList) {
+      if (t.isDeleted || t.isCompleted) continue;
+      if (t.isFixedTime && t.fixedStart && t.fixedEnd) {
+        busy.push({ startMs: new Date(t.fixedStart).getTime(), endMs: new Date(t.fixedEnd).getTime() });
+      } else if (!replanning.has(String(t.id))) {
+        for (const s of t.sessions ?? []) busy.push({ startMs: new Date(s.start).getTime(), endMs: new Date(s.end).getTime() });
+      }
+    }
+    return busy;
+  }
+
+  // Re-plans the given tasks around everything else and saves their new sessions. Tasks in
+  // `ids` that can't be planned (completed, fixed-time, no duration) get their sessions cleared.
+  async function replanTasks(taskList: Record<string, any>[], ids: Set<string>): Promise<PlanResult & { saveError?: string }> {
+    const targets = taskList.filter(t => ids.has(String(t.id)) && isPlannable(t));
+    const result = planSessions(
+      targets.map(toPlannerTask),
+      busyIntervals(taskList, ids),
+      prefsForWorkTime(profile?.work_time, profile?.work_style),
+      Date.now(),
+    );
+    const byTask = new Map<string, { start: string; end: string }[]>();
+    ids.forEach(id => byTask.set(id, []));
+    for (const s of result.sessions) {
+      byTask.get(s.taskId)?.push({ start: new Date(s.startMs).toISOString(), end: new Date(s.endMs).toISOString() });
+    }
+    const writes = await Promise.all([...byTask].map(([id, sessions]) => supabase.from('tasks').update({ sessions }).eq('id', id)));
+    const failed = writes.find(w => w.error);
+    if (failed) return { ...result, saveError: failed.error!.message };
+    setTasks(prev => prev.map(t => byTask.has(String(t.id)) ? { ...t, sessions: byTask.get(String(t.id)) } : t));
+    return result;
+  }
+
+  function reportPlan(result: PlanResult & { saveError?: string }, taskList: Record<string, any>[], label: string) {
+    if (result.saveError) {
+      setPlanMessage({ text: `Couldn't save the plan: ${result.saveError}`, error: true });
+      return;
+    }
+    const title = (id: string) => taskList.find(t => String(t.id) === id)?.title ?? 'A task';
+    const lines = result.unplaced.map(u => `"${title(u.taskId)}" couldn't be scheduled. ${u.reason}`);
+    if (lines.length) setPlanMessage({ text: lines.join(' '), error: true });
+    else if (label) setPlanMessage({ text: label });
+    else return;
+    window.setTimeout(() => setPlanMessage(null), lines.length ? 9000 : 4000);
+  }
+
+  async function planWeek() {
+    setPlanning(true);
+    try {
+      const ids = new Set(tasks.filter(t => !t.isDeleted && !t.isCompleted).map(t => String(t.id)));
+      const result = await replanTasks(tasks, ids);
+      const planned = new Set(result.sessions.map(s => s.taskId)).size;
+      reportPlan(result, tasks, planned ? `Planned ${planned} task${planned === 1 ? '' : 's'} into your free time.` : 'Nothing to plan — add a duration to a task to schedule it.');
+    } finally {
+      setPlanning(false);
+    }
   }
 
   // ── Modal helpers ──
@@ -1044,7 +1156,7 @@ export default function CalendarPage() {
 
   const openDetail = (ev: CalendarEvent) => {
     if (String(ev.id).startsWith('sched-')) {
-      const task = tasks.find(t => String(t.id) === String(ev.id).slice('sched-'.length));
+      const task = tasks.find(t => String(t.id) === taskIdFromCalendarId(ev.id));
       if (task) openEditTask(task);
       return;
     }
@@ -1162,8 +1274,16 @@ export default function CalendarPage() {
       const { data, error } = await supabase.from('tasks').update(row).eq('id', editingTaskId).select();
       if (!error && data) {
         const updated = taskFromRow(data[0]);
-        setTasks(prev => prev.map(item => item.id === editingTaskId ? updated : item));
+        const before = tasks.find(item => item.id === editingTaskId);
+        const nextTasks = tasks.map(item => item.id === editingTaskId ? updated : item);
+        setTasks(nextTasks);
         closeModal();
+        const schedulingKey = (t?: Record<string, any>) => t && JSON.stringify([
+          t.durationMinutes, t.deadline, t.priority, t.energyLevel, t.isFixedTime, t.fixedStart, t.fixedEnd, t.isSplittable, t.chunkSize,
+        ]);
+        if (schedulingKey(before) !== schedulingKey(updated)) {
+          reportPlan(await replanTasks(nextTasks, new Set([String(updated.id)])), nextTasks, '');
+        }
       } else {
         setModalError(error?.message ?? 'Failed to update task.');
       }
@@ -1175,10 +1295,12 @@ export default function CalendarPage() {
       const { data, error } = await supabase.from('tasks').insert([{ ...row, user_id: session.user.id }]).select();
       if (!error && data) {
         const newTask = taskFromRow(data[0]);
-        setTasks(prev => [newTask, ...prev]);
+        const nextTasks = [newTask, ...tasks];
+        setTasks(nextTasks);
         setCreatedMessage(`Saved "${newTask.title}"`);
         setTimeout(() => setCreatedMessage(null), 2500);
         closeModal();
+        if (isPlannable(newTask)) reportPlan(await replanTasks(nextTasks, new Set([String(newTask.id)])), nextTasks, '');
       } else {
         setModalError(error?.message ?? 'Failed to save task.');
       }
@@ -1253,6 +1375,16 @@ export default function CalendarPage() {
             }}>{v}</button>
           ))}
         </div>
+
+        <button
+          onClick={() => { const now = new Date(); openAdd(toDateKey(now), Math.min(now.getHours() + 1, 23)); }}
+          style={{
+            padding: '8px 16px', borderRadius: 10, border: 'none', background: accentColor,
+            color: getTextColor(accentColor), fontSize: 13, fontWeight: 700, cursor: 'pointer',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.12)', whiteSpace: 'nowrap',
+          }}>
+          + New Event
+        </button>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid #e0e0e0', borderRadius: 8, padding: '6px 12px' }}>
           <span style={{ color: '#aaa' }}>🔍</span>
@@ -1383,6 +1515,23 @@ export default function CalendarPage() {
                 + New Task
               </button>
             </div>
+            <button
+              onClick={planWeek}
+              disabled={planning}
+              title="Fit every task with a duration into your free time before its deadline"
+              style={{
+                width: '100%', padding: '8px 12px', borderRadius: 10, border: `1px solid ${accentColor}`,
+                background: 'transparent', color: '#1a1a1a', fontSize: 13, fontWeight: 600,
+                cursor: planning ? 'default' : 'pointer', opacity: planning ? 0.6 : 1,
+              }}>
+              {planning ? 'Planning…' : '✦ Plan my week'}
+            </button>
+            {planMessage && (
+              <div role="status" style={{ marginTop: 8, borderRadius: 6, padding: '6px 10px', fontSize: 12, fontWeight: 600, lineHeight: 1.4,
+                background: planMessage.error ? '#fef2f2' : '#f0fdf4', color: planMessage.error ? '#b91c1c' : '#16a34a' }}>
+                {planMessage.text}
+              </div>
+            )}
           </div>
 
           {/* Task List */}
