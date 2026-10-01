@@ -27,10 +27,10 @@ function taskFromRow(row: Record<string, any>): Record<string, any> {
   };
 }
 
-// A task's calendar block, derived directly from the task's own fields — no scheduling,
-// no searching for an open slot. Fixed start/end (if set) wins; otherwise a task with a
-// deadline shows up ending exactly at that deadline, sized by its own duration. A task
-// with neither has no calendar representation — it just lives in the task list.
+// A task's calendar entry, derived directly from the task's own fields. Fixed start/end
+// (time the user committed to) renders as a real block; otherwise a task with a deadline is
+// a fixed-size pill at the due time — its duration is shown as text, not as block height,
+// so long tasks don't look like booked time. A task with neither lives only in the list.
 function computeTaskCalendarEvent(t: Record<string, any>): CalendarEvent | null {
   if (t.isFixedTime && t.fixedStart && t.fixedEnd) {
     const s = new Date(t.fixedStart);
@@ -47,18 +47,18 @@ function computeTaskCalendarEvent(t: Record<string, any>): CalendarEvent | null 
   }
 
   if (t.deadline) {
-    const end = new Date(t.deadline);
-    const durationMin = Math.max(1, t.durationMinutes || t.duration || 30);
-    const dayStart = new Date(end.getFullYear(), end.getMonth(), end.getDate(), 0, 0, 0);
-    const start = new Date(Math.max(end.getTime() - durationMin * 60000, dayStart.getTime()));
+    const due = new Date(t.deadline);
+    const dueTime = due.toTimeString().slice(0, 8);
     return {
       id: `sched-${t.id}`,
       title: t.title,
-      date: toDateKey(end),
-      start_time: start.toTimeString().slice(0, 8),
-      end_time: end.toTimeString().slice(0, 8),
-      description: 'Due',
+      date: toDateKey(due),
+      start_time: dueTime,
+      end_time: dueTime,
+      description: '',
       color: t.color,
+      isTaskDue: true,
+      taskDurationMin: t.durationMinutes || t.duration || 0,
     };
   }
 
@@ -80,6 +80,8 @@ interface CalendarEvent {
   recurrence?: { type: 'none' | 'daily' | 'weekly'; days?: number[] } | null;
   google_event_id?: string | null;
   _recurringBaseId?: string;
+  isTaskDue?: boolean;
+  taskDurationMin?: number;
 }
 
 const PASTEL_COLORS = [
@@ -294,6 +296,38 @@ function joinDateTime(date: string, time: string): string {
 }
 
 const HOUR_HEIGHT = 60; // px per hour in day/week views
+const TASK_PILL_HEIGHT = 22;
+
+function formatDuration(min: number) {
+  if (min < 60) return `${min}m`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function TaskDuePill({ ev, top, col, totalCols, accentColor, onOpen }: {
+  ev: CalendarEvent; top: number; col: number; totalCols: number; accentColor: string;
+  onOpen: (ev: CalendarEvent) => void;
+}) {
+  const bg = ev.color ?? accentColor;
+  const fg = getTextColor(bg);
+  const meta = ev.taskDurationMin ? `${formatEventTime(ev.start_time)} · ${formatDuration(ev.taskDurationMin)}` : formatEventTime(ev.start_time);
+  return (
+    <div onClick={e => { e.stopPropagation(); onOpen(ev); }}
+      title={`${ev.title} — due ${meta}`}
+      style={{ position: 'absolute', top, height: TASK_PILL_HEIGHT, zIndex: 2,
+        left: `calc(${(col / totalCols) * 100}% + 2px)`,
+        width: `calc(${(1 / totalCols) * 100}% - 4px)`,
+        backgroundColor: bg, color: fg, borderRadius: TASK_PILL_HEIGHT / 2,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.15)', boxSizing: 'border-box',
+        display: 'flex', alignItems: 'center', gap: 4, padding: '0 8px',
+        fontSize: 11, fontWeight: 600, cursor: 'pointer', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+      <ListChecks style={{ width: 11, height: 11, flexShrink: 0 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{ev.title}</span>
+      <span style={{ marginLeft: 'auto', paddingLeft: 4, opacity: 0.75, fontWeight: 500, fontSize: 10, flexShrink: 0 }}>{meta}</span>
+    </div>
+  );
+}
 
 function getEventPosition(ev: CalendarEvent): { top: number; height: number } | null {
   const sp = ev.start_time.split(':').map(Number);
@@ -301,6 +335,10 @@ function getEventPosition(ev: CalendarEvent): { top: number; height: number } | 
   if (sp.length < 2 || ep.length < 2 || isNaN(sp[0]) || isNaN(ep[0])) return null;
   const startMin = sp[0] * 60 + (sp[1] ?? 0);
   const endMin = ep[0] * 60 + (ep[1] ?? 0);
+  if (ev.isTaskDue) {
+    const top = Math.min((startMin / 60) * HOUR_HEIGHT, 24 * HOUR_HEIGHT - TASK_PILL_HEIGHT);
+    return { top, height: TASK_PILL_HEIGHT };
+  }
   const durMin = Math.max(endMin - startMin, 15);
   return { top: (startMin / 60) * HOUR_HEIGHT, height: (durMin / 60) * HOUR_HEIGHT };
 }
@@ -452,6 +490,7 @@ function WeekView({ currentDate, events, openAdd, openDetail, accentColor }: {
                     </>
                   )}
                   {computeEventLayouts(dayEvents).map(({ ev, top, height, col, totalCols }) => {
+                    if (ev.isTaskDue) return <TaskDuePill key={ev.id} ev={ev} top={top} col={col} totalCols={totalCols} accentColor={accentColor} onOpen={openDetail} />;
                     const bg = ev.color ?? accentColor;
                     const fg = getTextColor(bg);
                     const isSched = String(ev.id).startsWith('sched-');
@@ -473,6 +512,7 @@ function WeekView({ currentDate, events, openAdd, openDetail, accentColor }: {
                           {formatEventTime(ev.start_time)}
                         </div>
                         <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
+                        {ev.description && height > 54 && <div style={{ fontSize: '10px', opacity: 0.7, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.description}</div>}
                       </div>
                     );
                   })}
@@ -545,6 +585,7 @@ function DayView({ currentDate, events, openAdd, openDetail, accentColor }: {
           )}
           {/* Events */}
           {computeEventLayouts(dayEvents).map(({ ev, top, height, col, totalCols }) => {
+            if (ev.isTaskDue) return <TaskDuePill key={ev.id} ev={ev} top={top} col={col} totalCols={totalCols} accentColor={accentColor} onOpen={openDetail} />;
             const bg = ev.color ?? accentColor;
             const fg = getTextColor(bg);
             const isSched = String(ev.id).startsWith('sched-');
@@ -625,8 +666,8 @@ function MonthView({ currentDate, events, openAdd, openDetail, setCurrentDate, s
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
                       border: isSched ? `1px dashed ${fg}` : 'none',
                     }}>
-                    {isSched && <ListChecks style={{ width: 9, height: 9, verticalAlign: -1, marginRight: 2 }} />}
-                    <span style={{ opacity: 0.8, fontWeight: 500 }}>{formatEventTimeRange(ev.start_time, ev.end_time)}</span>{' '}{ev.title}
+                    {isSched && <ListChecks style={{ display: 'inline-block', width: 9, height: 9, verticalAlign: -1, marginRight: 2 }} />}
+                    <span style={{ opacity: 0.8, fontWeight: 500 }}>{ev.isTaskDue ? `Due ${formatEventTime(ev.start_time)}` : formatEventTimeRange(ev.start_time, ev.end_time)}</span>{' '}{ev.title}
                   </div>
                 );
               })}
@@ -1002,6 +1043,11 @@ export default function CalendarPage() {
   };
 
   const openDetail = (ev: CalendarEvent) => {
+    if (String(ev.id).startsWith('sched-')) {
+      const task = tasks.find(t => String(t.id) === String(ev.id).slice('sched-'.length));
+      if (task) openEditTask(task);
+      return;
+    }
     setFormTitle(ev.title);
     setFormDate(ev.date);
     setFormStart(ev.start_time.slice(0, 5));
@@ -1061,37 +1107,12 @@ export default function CalendarPage() {
     const recurrenceData = formRecurrenceType !== 'none'
       ? { type: formRecurrenceType, days: formRecurrenceType === 'weekly' ? formRecurrenceDays : [] }
       : null;
-    const updates = { title: formTitle.trim(), date: formDate, start_time: formStart, end_time: formEnd, description: formDesc, color: formColor, recurrence: recurrenceData };
-
-    const isSchedEvent = editingEventId.startsWith('sched-');
-    if (isSchedEvent) {
-      // Auto-scheduled blocks are derived straight from their task, not a real row — editing
-      // one and saving pins the source task to this exact time (updated in place, no separate
-      // event row) so future reshuffles leave it alone instead of trying to re-place it.
-      if (!userId) { setModalError('Not signed in.'); return; }
-      const taskId = editingEventId.slice('sched-'.length);
-
-      const fixedStartIso = new Date(`${formDate}T${formStart}`).toISOString();
-      const fixedEndIso = new Date(`${formDate}T${formEnd}`).toISOString();
-      const durationMinutes = Math.max(0, Math.round((new Date(fixedEndIso).getTime() - new Date(fixedStartIso).getTime()) / 60000));
-      const { error } = await supabase.from('tasks').update({
-        title: updates.title,
-        description: updates.description,
-        color: updates.color,
-        is_fixed_time: true,
-        fixed_start: fixedStartIso,
-        fixed_end: fixedEndIso,
-        duration_minutes: durationMinutes,
-      }).eq('id', taskId);
-      if (error) { setModalError(error.message); return; }
-
-      setEvents(prev => prev.map(e => e.id === editingEventId ? { ...e, ...updates } : e));
-      setTasks(prev => prev.map(t => t.id === taskId
-        ? { ...t, title: updates.title, description: updates.description, color: updates.color, isFixedTime: true, fixedStart: fixedStartIso, fixedEnd: fixedEndIso, durationMinutes, duration: durationMinutes }
-        : t));
-      closeModal();
-      return;
-    }
+    // formDate is whichever occurrence's day the user clicked into, not the series' own anchor
+    // date. While the event stays recurring, keep that anchor untouched — overwriting it with
+    // one instance's date shifts the whole series and makes earlier occurrences stop rendering.
+    const existingDate = events.find(e => e.id === editingEventId)?.date;
+    const dateForUpdate = recurrenceData && existingDate ? existingDate : formDate;
+    const updates = { title: formTitle.trim(), date: dateForUpdate, start_time: formStart, end_time: formEnd, description: formDesc, color: formColor, recurrence: recurrenceData };
 
     const { error } = await supabase.from('events').update(updates).eq('id', editingEventId);
     if (!error) {
@@ -1104,23 +1125,6 @@ export default function CalendarPage() {
   };
 
   const deleteEvent = async (id: string) => {
-    if (String(id).startsWith('sched-')) {
-      // This block is derived straight from the task's own fields (fixed start/end, or
-      // deadline) — just removing it from `events` would leave it reappearing unchanged
-      // the moment `tasks` changes again and the sync effect recomputes it. Clear whichever
-      // field is actually producing it.
-      const taskId = id.slice('sched-'.length);
-      const task = tasks.find(t => t.id === taskId);
-      const clears = task?.isFixedTime
-        ? { is_fixed_time: false, fixed_start: null, fixed_end: null }
-        : { deadline: null };
-      await supabase.from('tasks').update(clears).eq('id', taskId);
-      setTasks(prev => prev.map(t => t.id === taskId
-        ? { ...t, ...(task?.isFixedTime ? { isFixedTime: false, fixedStart: null, fixedEnd: null } : { deadline: null }) }
-        : t));
-      closeModal();
-      return;
-    }
     const googleEventId = events.find(e => e.id === id)?.google_event_id;
     const { error } = await supabase.from('events').delete().eq('id', id);
     if (!error) {
@@ -1138,7 +1142,7 @@ export default function CalendarPage() {
     setModalError(null);
     const durationMinutes = taskIsFixedTime && taskFixedStart && taskFixedEnd
       ? Math.max(0, Math.round((new Date(taskFixedEnd).getTime() - new Date(taskFixedStart).getTime()) / 60000))
-      : (Number(taskDuration) || 30);
+      : (Number(taskDuration) || 0);
     const row = {
       title: taskTitle.trim(),
       description: taskDesc.trim(),
