@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { ChevronDown, CircleUserRound, ListChecks, Pencil } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { deleteGoogleEvent, disconnectGoogle, getGoogleStatus, pushGoogleEvent, startGoogleConnect, syncGoogle } from '../../lib/google/client';
-import { planSessions, prefsForWorkTime, PLANNING_HORIZON_DAYS, type PlannerTask, type PlanResult } from '../../lib/scheduler';
+import { hasConflicts, planSessions, prefsForWorkTime, resolveConflicts, PLANNING_HORIZON_DAYS, type PlannerTask, type PlanResult, type ScheduledTask } from '../../lib/scheduler';
 
 function taskFromRow(row: Record<string, any>): Record<string, any> {
   return {
@@ -1023,9 +1023,18 @@ export default function CalendarPage() {
     chunk: t.isSplittable && t.chunkSize?.max > 0 ? { min: Number(t.chunkSize.min) || 0, max: Number(t.chunkSize.max) } : null,
   });
 
-  // Everything already occupying time: events (recurring ones expanded), fixed-time tasks and the
-  // sessions of every task that isn't being re-planned. All-day events don't block time.
-  function busyIntervals(taskList: Record<string, any>[], replanning: Set<string>) {
+  const toScheduledTask = (t: Record<string, any>): ScheduledTask => ({
+    ...toPlannerTask(t),
+    sessions: (t.sessions ?? []).map((s: { start: string; end: string }) => ({
+      startMs: new Date(s.start).getTime(), endMs: new Date(s.end).getTime(),
+    })),
+  });
+
+  const plannerPrefs = () => prefsForWorkTime(profile?.work_time, profile?.work_style);
+
+  // Time nothing may be scheduled over: events (recurring ones expanded) and fixed-time tasks.
+  // All-day events don't block time.
+  function fixedBusyIntervals(taskList: Record<string, any>[]) {
     const now = Date.now();
     const realEvents = events.filter(e => !String(e.id).startsWith('sched-'));
     const expanded = expandEvents(realEvents, new Date(now - 86_400_000), new Date(now + (PLANNING_HORIZON_DAYS + 2) * 86_400_000));
@@ -1041,34 +1050,86 @@ export default function CalendarPage() {
       if (t.isDeleted || t.isCompleted) continue;
       if (t.isFixedTime && t.fixedStart && t.fixedEnd) {
         busy.push({ startMs: new Date(t.fixedStart).getTime(), endMs: new Date(t.fixedEnd).getTime() });
-      } else if (!replanning.has(String(t.id))) {
-        for (const s of t.sessions ?? []) busy.push({ startMs: new Date(s.start).getTime(), endMs: new Date(s.end).getTime() });
       }
     }
     return busy;
   }
 
+  // Fixed busy time plus the sessions of every task that isn't being re-planned.
+  function busyIntervals(taskList: Record<string, any>[], replanning: Set<string>) {
+    const busy = fixedBusyIntervals(taskList);
+    for (const t of taskList) {
+      if (!isPlannable(t) || replanning.has(String(t.id))) continue;
+      busy.push(...toScheduledTask(t).sessions);
+    }
+    return busy;
+  }
+
+  // Set while sessions are being written, so the conflict watcher doesn't race a re-plan.
+  const schedulingInFlight = useRef(false);
+
+  async function saveSessions(byTask: Map<string, { startMs: number; endMs: number }[]>): Promise<string | null> {
+    const asRows = new Map([...byTask].map(([id, list]) => [id, list.map(s => ({
+      start: new Date(s.startMs).toISOString(), end: new Date(s.endMs).toISOString(),
+    }))]));
+    const writes = await Promise.all([...asRows].map(([id, sessions]) => supabase.from('tasks').update({ sessions }).eq('id', id)));
+    const failed = writes.find(w => w.error);
+    if (failed) return failed.error!.message;
+    setTasks(prev => prev.map(t => asRows.has(String(t.id)) ? { ...t, sessions: asRows.get(String(t.id)) } : t));
+    return null;
+  }
+
   // Re-plans the given tasks around everything else and saves their new sessions. Tasks in
   // `ids` that can't be planned (completed, fixed-time, no duration) get their sessions cleared.
   async function replanTasks(taskList: Record<string, any>[], ids: Set<string>): Promise<PlanResult & { saveError?: string }> {
-    const targets = taskList.filter(t => ids.has(String(t.id)) && isPlannable(t));
-    const result = planSessions(
-      targets.map(toPlannerTask),
-      busyIntervals(taskList, ids),
-      prefsForWorkTime(profile?.work_time, profile?.work_style),
-      Date.now(),
-    );
-    const byTask = new Map<string, { start: string; end: string }[]>();
-    ids.forEach(id => byTask.set(id, []));
-    for (const s of result.sessions) {
-      byTask.get(s.taskId)?.push({ start: new Date(s.startMs).toISOString(), end: new Date(s.endMs).toISOString() });
+    schedulingInFlight.current = true;
+    try {
+      const targets = taskList.filter(t => ids.has(String(t.id)) && isPlannable(t));
+      const result = planSessions(targets.map(toPlannerTask), busyIntervals(taskList, ids), plannerPrefs(), Date.now());
+      const byTask = new Map<string, { startMs: number; endMs: number }[]>();
+      ids.forEach(id => byTask.set(id, []));
+      for (const s of result.sessions) byTask.get(s.taskId)?.push(s);
+      const saveError = await saveSessions(byTask);
+      return saveError ? { ...result, saveError } : result;
+    } finally {
+      schedulingInFlight.current = false;
     }
-    const writes = await Promise.all([...byTask].map(([id, sessions]) => supabase.from('tasks').update({ sessions }).eq('id', id)));
-    const failed = writes.find(w => w.error);
-    if (failed) return { ...result, saveError: failed.error!.message };
-    setTasks(prev => prev.map(t => byTask.has(String(t.id)) ? { ...t, sessions: byTask.get(String(t.id)) } : t));
-    return result;
   }
+
+  // Conflict resolution: whenever events or tasks change (a new or moved event, a Google
+  // sync, a task becoming fixed-time…), any work session that now clashes is moved to the
+  // next good free slot. Sessions that don't clash are never touched.
+  useEffect(() => {
+    if (schedulingInFlight.current) return;
+    const scheduled = tasks.filter(t => isPlannable(t) && t.sessions?.length).map(toScheduledTask);
+    if (scheduled.length === 0) return;
+    const busy = fixedBusyIntervals(tasks);
+    const now = Date.now();
+    if (!hasConflicts(scheduled, busy, now)) return;
+
+    schedulingInFlight.current = true;
+    (async () => {
+      try {
+        const { changed, moves } = resolveConflicts(scheduled, busy, plannerPrefs(), now);
+        const saveError = await saveSessions(new Map(Object.entries(changed)));
+        if (saveError) {
+          setPlanMessage({ text: `Couldn't reschedule around a conflict: ${saveError}`, error: true });
+          return;
+        }
+        const title = (id: string) => tasks.find(t => String(t.id) === id)?.title ?? 'A task';
+        const when = (ms: number) => new Date(ms).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+        const lines = moves.map(m => m.to
+          ? `Moved "${title(m.taskId)}" from ${when(m.from.startMs)} to ${when(m.to.startMs)}.`
+          : `Removed "${title(m.taskId)}" session on ${when(m.from.startMs)} — no free time left before its deadline.`);
+        const dropped = moves.some(m => !m.to);
+        setPlanMessage({ text: `Schedule conflict fixed. ${lines.join(' ')}`, error: dropped });
+        window.setTimeout(() => setPlanMessage(null), 9000);
+      } finally {
+        schedulingInFlight.current = false;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [events, tasks]);
 
   function reportPlan(result: PlanResult & { saveError?: string }, taskList: Record<string, any>[], label: string) {
     if (result.saveError) {

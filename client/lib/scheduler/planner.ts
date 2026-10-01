@@ -101,6 +101,55 @@ function overlapMs(a: Interval, set: IntervalSet): number {
   return new IntervalSet([a]).intersect(set).totalDurationMs();
 }
 
+function byUrgency(a: PlannerTask, b: PlannerTask): number {
+  return (a.deadlineMs ?? Infinity) - (b.deadlineMs ?? Infinity)
+    || PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]
+    || b.durationMinutes - a.durationMinutes
+    || a.id.localeCompare(b.id);
+}
+
+interface SlotQuery {
+  free: IntervalSet;
+  peak: IntervalSet;
+  lenMs: number;
+  /** Bounds for this slot. */
+  earliestMs: number;
+  latestEndMs: number;
+  /** Where "earlier is better" is measured from (the start of planning). */
+  originMs: number;
+  energy: PlannerEnergy;
+  /** The task's other sessions, so pieces get spread across days. */
+  siblings: Interval[];
+}
+
+/** The best free slot for one session, or null if none fits. */
+function bestSlot(q: SlotQuery): Interval | null {
+  if (q.earliestMs >= q.latestEndMs) return null;
+  const feasible = q.free.intersect(new IntervalSet([{ startMs: q.earliestMs, endMs: q.latestEndMs }])).toList();
+  const span = Math.max(q.latestEndMs - q.originMs, 1);
+  const siblingDays = new Set(q.siblings.map(s => localDayStart(s.startMs)));
+
+  let best: Interval | null = null;
+  let bestScore = -Infinity;
+  for (const gap of feasible) {
+    for (let s = ceilToStep(gap.startMs); s + q.lenMs <= gap.endMs; s += STEP_MIN * MIN) {
+      const slot = { startMs: s, endMs: s + q.lenMs };
+      // Earlier is better: finish well ahead of the deadline rather than at it.
+      let score = (1 - (s - q.originMs) / span) * 100;
+      const peakShare = overlapMs(slot, q.peak) / q.lenMs;
+      if (q.energy === 'High') score += peakShare * 30;
+      if (q.energy === 'Low') score += (1 - peakShare) * 15;
+      if (siblingDays.has(localDayStart(s))) score -= 40;
+      if (new Date(s).getMinutes() % 30 === 0) score += 2;
+      if (score > bestScore) {
+        bestScore = score;
+        best = slot;
+      }
+    }
+  }
+  return best;
+}
+
 /**
  * @param tasks  tasks to (re)plan — any existing sessions for these should NOT be in `busy`
  * @param busy   time that is already taken: events, fixed-time tasks, other tasks' sessions
@@ -119,11 +168,7 @@ export function planSessions(
     .subtract(new IntervalSet(validBusy));
   const peak = dailyWindows(startMs, horizonEndMs, prefs.peakStartMin, prefs.peakEndMin);
 
-  const ordered = [...tasks].sort((a, b) =>
-    (a.deadlineMs ?? Infinity) - (b.deadlineMs ?? Infinity)
-    || PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]
-    || b.durationMinutes - a.durationMinutes
-    || a.id.localeCompare(b.id));
+  const ordered = [...tasks].sort(byUrgency);
 
   const sessions: PlannedSession[] = [];
   const unplaced: PlanResult['unplaced'] = [];
@@ -143,30 +188,10 @@ export function planSessions(
     let failed = false;
 
     for (const minutes of pieces) {
-      const lenMs = minutes * MIN;
-      const window = new IntervalSet([{ startMs: earliestMs, endMs: latestEndMs }]);
-      const feasible = earliestMs < latestEndMs ? freeForTask.intersect(window).toList() : [];
-      const span = Math.max(latestEndMs - startMs, 1);
-
-      let best: Interval | null = null;
-      let bestScore = -Infinity;
-      for (const gap of feasible) {
-        for (let s = ceilToStep(gap.startMs); s + lenMs <= gap.endMs; s += STEP_MIN * MIN) {
-          const slot = { startMs: s, endMs: s + lenMs };
-          // Earlier is better: finish well ahead of the deadline rather than at it.
-          let score = (1 - (s - startMs) / span) * 100;
-          const peakShare = overlapMs(slot, peak) / lenMs;
-          if (task.energyLevel === 'High') score += peakShare * 30;
-          if (task.energyLevel === 'Low') score += (1 - peakShare) * 15;
-          // Spread pieces of one task across days instead of stacking them back-to-back.
-          if (placed.some(p => localDayStart(p.startMs) === localDayStart(s))) score -= 40;
-          if (new Date(s).getMinutes() % 30 === 0) score += 2;
-          if (score > bestScore) {
-            bestScore = score;
-            best = slot;
-          }
-        }
-      }
+      const best = bestSlot({
+        free: freeForTask, peak, lenMs: minutes * MIN, earliestMs, latestEndMs,
+        originMs: startMs, energy: task.energyLevel, siblings: placed,
+      });
 
       if (!best) {
         failed = true;
@@ -193,4 +218,105 @@ export function planSessions(
 
   sessions.sort((a, b) => a.startMs - b.startMs);
   return { sessions, unplaced };
+}
+
+// ── Conflict resolution ──────────────────────────────────────────────────────
+
+export interface ScheduledTask extends PlannerTask {
+  sessions: Interval[];
+}
+
+export interface SessionMove {
+  taskId: string;
+  from: Interval;
+  /** null when no free slot was left before the deadline; the session was dropped. */
+  to: Interval | null;
+}
+
+export interface ConflictResolution {
+  /** New full session list for every task that changed. */
+  changed: Record<string, Interval[]>;
+  moves: SessionMove[];
+}
+
+function overlapsAny(s: Interval, set: IntervalSet): boolean {
+  return overlapMs(s, set) > 0;
+}
+
+/**
+ * Splits every task's sessions into ones that can stay and ones that clash with fixed busy
+ * time (events, fixed-time tasks) or with a more urgent task's session. Sessions that have
+ * already ended are never touched.
+ */
+function classifySessions(tasks: ScheduledTask[], busy: IntervalSet, nowMs: number) {
+  const kept = new Map<string, Interval[]>();
+  const conflicting = new Map<string, Interval[]>();
+  let claimed = IntervalSet.empty();
+  for (const task of [...tasks].sort(byUrgency)) {
+    const keep: Interval[] = [];
+    const clash: Interval[] = [];
+    for (const s of [...task.sessions].filter(s => s.endMs > s.startMs).sort((a, b) => a.startMs - b.startMs)) {
+      if (s.endMs <= nowMs) keep.push(s);
+      else if (overlapsAny(s, busy) || overlapsAny(s, claimed)) clash.push(s);
+      else {
+        keep.push(s);
+        claimed = claimed.union(new IntervalSet([s]));
+      }
+    }
+    kept.set(task.id, keep);
+    if (clash.length) conflicting.set(task.id, clash);
+  }
+  return { kept, conflicting };
+}
+
+export function hasConflicts(tasks: ScheduledTask[], busy: Interval[], nowMs: number): boolean {
+  const busySet = new IntervalSet(busy.filter(b => b.endMs > b.startMs));
+  return classifySessions(tasks, busySet, nowMs).conflicting.size > 0;
+}
+
+/**
+ * Moves only the sessions that clash, leaving every other session where it is.
+ * @param busy  fixed busy time only: events and fixed-time tasks (not sessions)
+ */
+export function resolveConflicts(
+  tasks: ScheduledTask[],
+  busy: Interval[],
+  prefs: PlannerPrefs,
+  nowMs: number,
+  horizonDays = PLANNING_HORIZON_DAYS,
+): ConflictResolution {
+  const busySet = new IntervalSet(busy.filter(b => b.endMs > b.startMs));
+  const { kept, conflicting } = classifySessions(tasks, busySet, nowMs);
+  const result: ConflictResolution = { changed: {}, moves: [] };
+  if (conflicting.size === 0) return result;
+
+  const startMs = ceilToStep(nowMs);
+  const horizonEndMs = addLocalDays(localDayStart(nowMs), horizonDays + 1);
+  const bufMs = prefs.bufferMin * MIN;
+  const keptFuture = [...kept.values()].flat().filter(s => s.endMs > nowMs)
+    .map(s => ({ startMs: s.startMs - bufMs, endMs: s.endMs + bufMs }));
+  let free = dailyWindows(startMs, horizonEndMs, prefs.dayStartMin, prefs.dayEndMin)
+    .subtract(busySet)
+    .subtract(new IntervalSet(keptFuture));
+  const peak = dailyWindows(startMs, horizonEndMs, prefs.peakStartMin, prefs.peakEndMin);
+
+  for (const task of [...tasks].sort(byUrgency)) {
+    const clashes = conflicting.get(task.id);
+    if (!clashes) continue;
+    const sessions = [...(kept.get(task.id) ?? [])];
+    for (const from of clashes) {
+      const to = bestSlot({
+        free, peak, lenMs: from.endMs - from.startMs, earliestMs: startMs,
+        latestEndMs: Math.min(task.deadlineMs ?? horizonEndMs, horizonEndMs),
+        originMs: startMs, energy: task.energyLevel, siblings: sessions,
+      });
+      result.moves.push({ taskId: task.id, from, to });
+      if (to) {
+        sessions.push(to);
+        free = free.subtract(new IntervalSet([{ startMs: to.startMs - bufMs, endMs: to.endMs + bufMs }]));
+      }
+    }
+    result.changed[task.id] = sessions.sort((a, b) => a.startMs - b.startMs);
+  }
+  return result;
 }
