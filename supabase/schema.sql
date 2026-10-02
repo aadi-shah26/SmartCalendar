@@ -106,3 +106,9 @@ alter table google_connections enable row level security;
 -- Smart scheduling: planned work sessions for a task, as [{ "start": iso, "end": iso }, ...]
 -- ---------------------------------------------------------------------------
 alter table tasks add column if not exists sessions jsonb not null default '[]'::jsonb;
+
+-- ---------------------------------------------------------------------------
+-- Smart scheduling: how the user likes to work, set from "Plan my week".
+-- { "dailyMinutes": 180, "sessionMinutes": 60, "workDays": [0..6], "spread": "steady" | "asap" }
+-- ---------------------------------------------------------------------------
+alter table profiles add column if not exists planning_prefs jsonb;

@@ -1,10 +1,13 @@
 'use client';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronDown, CircleUserRound, ListChecks, Pencil } from 'lucide-react';
+import Link from 'next/link';
+import { ChevronDown, CircleUserRound, House, ListChecks, Pencil, Sparkles } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
+import { parseText } from '../../lib/nlp/client';
 import { deleteGoogleEvent, disconnectGoogle, getGoogleStatus, pushGoogleEvent, startGoogleConnect, syncGoogle } from '../../lib/google/client';
-import { hasConflicts, planSessions, prefsForWorkTime, resolveConflicts, PLANNING_HORIZON_DAYS, type PlannerTask, type PlanResult, type ScheduledTask } from '../../lib/scheduler';
+import { hasConflicts, planSessions, prefsForWorkTime, resolveConflicts, DEFAULT_WORK_PLAN, PLANNING_HORIZON_DAYS, type PlannerPrefs, type PlannerTask, type PlanResult, type ScheduledTask, type WorkPlanSettings } from '../../lib/scheduler';
+import WorkPlanModal from '../../components/WorkPlanModal';
 
 function taskFromRow(row: Record<string, any>): Record<string, any> {
   return {
@@ -135,11 +138,12 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
   );
 }
 
-const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
+// Every 15 minutes, plus 11:59 PM so "due at midnight" stays on the same day.
+const TIME_OPTIONS = [...Array.from({ length: 96 }, (_, i) => {
   const h = Math.floor(i / 4);
   const m = (i % 4) * 15;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-});
+}), '23:59'];
 
 function TimePicker({ value, onChange }: { value: string; onChange: (t: string) => void }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -276,6 +280,18 @@ function formatHour(h: number) {
 
 function formatTimeStr(h: number) {
   return `${String(h).padStart(2, '0')}:00`;
+}
+
+/** Earliest start first; ties go to whichever ends first. Times are "HH:MM", so text order works. */
+function byStartTime(a: CalendarEvent, b: CalendarEvent) {
+  return (a.start_time ?? '').localeCompare(b.start_time ?? '') || (a.end_time ?? '').localeCompare(b.end_time ?? '');
+}
+
+/** Soonest deadline first; tasks without one go last, newest first as before. */
+function byDeadline(a: { deadline?: string | null }, b: { deadline?: string | null }) {
+  const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
+  const db = b.deadline ? new Date(b.deadline).getTime() : Infinity;
+  return da === db ? 0 : da < db ? -1 : 1;
 }
 
 function formatEventTime(timeStr: string) {
@@ -672,7 +688,7 @@ function MonthView({ currentDate, events, openAdd, openDetail, setCurrentDate, s
         {cells.map((day, i) => {
           if (!day) return <div key={i} style={{ borderTop: '1px solid #f0f0f0', borderRight: '1px solid #f0f0f0' }} />;
           const key = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-          const dayEvents = events.filter(e => e.date === key);
+          const dayEvents = events.filter(e => e.date === key).sort(byStartTime);
           const isToday = key === todayKey;
           return (
             <div key={i} onClick={() => openAdd(key, 9)}
@@ -751,6 +767,27 @@ function YearView({ currentDate, events, setCurrentDate, setView, accentColor }:
   );
 }
 
+function workPlanKey(userId: string) {
+  return `sc-work-plan:${userId}`;
+}
+
+/** The user's saved work plan from their profile, or this browser, or null if never set. */
+function readWorkPlan(fromProfile: unknown, userId: string): WorkPlanSettings | null {
+  let raw = fromProfile;
+  if (!raw) {
+    try { raw = JSON.parse(localStorage.getItem(workPlanKey(userId)) ?? 'null'); } catch { raw = null; }
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const p = raw as Partial<WorkPlanSettings>;
+  if (typeof p.dailyMinutes !== 'number' || typeof p.sessionMinutes !== 'number' || !Array.isArray(p.workDays)) return null;
+  return {
+    dailyMinutes: p.dailyMinutes,
+    sessionMinutes: p.sessionMinutes,
+    workDays: p.workDays.filter(d => Number.isInteger(d) && d >= 0 && d <= 6),
+    spread: p.spread === 'asap' ? 'asap' : 'steady',
+  };
+}
+
 // ── Main Page ──
 export default function CalendarPage() {
   const router = useRouter();
@@ -770,6 +807,11 @@ export default function CalendarPage() {
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
+
+  // Quick add: one line of plain English -> prefilled event/task form to review
+  const [quickText, setQuickText] = useState('');
+  const [quickBusy, setQuickBusy] = useState(false);
+  const [quickError, setQuickError] = useState<string | null>(null);
 
   // Event form fields
   const [formTitle, setFormTitle] = useState('');
@@ -808,6 +850,9 @@ export default function CalendarPage() {
   const [createdMessage, setCreatedMessage] = useState<string | null>(null);
   const [planMessage, setPlanMessage] = useState<{ text: string; error?: boolean } | null>(null);
   const [planning, setPlanning] = useState(false);
+  // How the user likes to work (daily limit, session length, days). null until they've said.
+  const [workPlan, setWorkPlan] = useState<WorkPlanSettings | null>(null);
+  const [showWorkPlan, setShowWorkPlan] = useState(false);
   const [undoInfo, setUndoInfo] = useState<{ id: string; timer?: number } | null>(null);
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
@@ -955,6 +1000,7 @@ export default function CalendarPage() {
       } else {
         setProfile({ email: session.user.email });
       }
+      setWorkPlan(readWorkPlan(profileRow?.planning_prefs, session.user.id));
     };
     loadUserData();
   }, [router]);
@@ -1030,7 +1076,18 @@ export default function CalendarPage() {
     })),
   });
 
-  const plannerPrefs = () => prefsForWorkTime(profile?.work_time, profile?.work_style);
+  const plannerPrefs = (plan: WorkPlanSettings | null = workPlan) =>
+    prefsForWorkTime(profile?.work_time, profile?.work_style, plan ?? DEFAULT_WORK_PLAN);
+
+  // Saved on the profile so it follows the user across devices, and in this browser as a
+  // fallback for databases that don't have the planning_prefs column yet.
+  async function saveWorkPlan(plan: WorkPlanSettings) {
+    setWorkPlan(plan);
+    try { if (userId) localStorage.setItem(workPlanKey(userId), JSON.stringify(plan)); } catch { /* storage blocked */ }
+    if (!userId) return;
+    const { error } = await supabase.from('profiles').update({ planning_prefs: plan }).eq('id', userId);
+    if (error) console.warn('[work plan] saved in this browser only:', error.message);
+  }
 
   // Time nothing may be scheduled over: events (recurring ones expanded) and fixed-time tasks.
   // All-day events don't block time.
@@ -1055,14 +1112,12 @@ export default function CalendarPage() {
     return busy;
   }
 
-  // Fixed busy time plus the sessions of every task that isn't being re-planned.
-  function busyIntervals(taskList: Record<string, any>[], replanning: Set<string>) {
-    const busy = fixedBusyIntervals(taskList);
-    for (const t of taskList) {
-      if (!isPlannable(t) || replanning.has(String(t.id))) continue;
-      busy.push(...toScheduledTask(t).sessions);
-    }
-    return busy;
+  // The sessions of every task that isn't being re-planned. They block time and count
+  // toward each day's work limit.
+  function otherSessions(taskList: Record<string, any>[], replanning: Set<string>) {
+    return taskList
+      .filter(t => isPlannable(t) && !replanning.has(String(t.id)))
+      .flatMap(t => toScheduledTask(t).sessions);
   }
 
   // Set while sessions are being written, so the conflict watcher doesn't race a re-plan.
@@ -1081,11 +1136,15 @@ export default function CalendarPage() {
 
   // Re-plans the given tasks around everything else and saves their new sessions. Tasks in
   // `ids` that can't be planned (completed, fixed-time, no duration) get their sessions cleared.
-  async function replanTasks(taskList: Record<string, any>[], ids: Set<string>): Promise<PlanResult & { saveError?: string }> {
+  async function replanTasks(
+    taskList: Record<string, any>[], ids: Set<string>, prefs: PlannerPrefs = plannerPrefs(),
+  ): Promise<PlanResult & { saveError?: string }> {
     schedulingInFlight.current = true;
     try {
       const targets = taskList.filter(t => ids.has(String(t.id)) && isPlannable(t));
-      const result = planSessions(targets.map(toPlannerTask), busyIntervals(taskList, ids), plannerPrefs(), Date.now());
+      const others = otherSessions(taskList, ids);
+      const busy = [...fixedBusyIntervals(taskList), ...others];
+      const result = planSessions(targets.map(toPlannerTask), busy, prefs, Date.now(), PLANNING_HORIZON_DAYS, others);
       const byTask = new Map<string, { startMs: number; endMs: number }[]>();
       ids.forEach(id => byTask.set(id, []));
       for (const s of result.sessions) byTask.get(s.taskId)?.push(s);
@@ -1131,26 +1190,37 @@ export default function CalendarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events, tasks]);
 
-  function reportPlan(result: PlanResult & { saveError?: string }, taskList: Record<string, any>[], label: string) {
+  function reportPlan(
+    result: PlanResult & { saveError?: string }, taskList: Record<string, any>[], label: string,
+    plan: WorkPlanSettings | null = workPlan,
+  ) {
     if (result.saveError) {
       setPlanMessage({ text: `Couldn't save the plan: ${result.saveError}`, error: true });
       return;
     }
     const title = (id: string) => taskList.find(t => String(t.id) === id)?.title ?? 'A task';
     const lines = result.unplaced.map(u => `"${title(u.taskId)}" couldn't be scheduled. ${u.reason}`);
-    if (lines.length) setPlanMessage({ text: lines.join(' '), error: true });
-    else if (label) setPlanMessage({ text: label });
+    const limit = (plan ?? DEFAULT_WORK_PLAN).dailyMinutes / 60;
+    const over = result.overLimit.map(id =>
+      `"${title(id)}" needed more than your ${limit}h daily limit to finish before its deadline.`);
+    if (lines.length) setPlanMessage({ text: [...lines, ...over].join(' '), error: true });
+    else if (label || over.length) setPlanMessage({ text: [label, ...over].filter(Boolean).join(' '), error: false });
     else return;
-    window.setTimeout(() => setPlanMessage(null), lines.length ? 9000 : 4000);
+    window.setTimeout(() => setPlanMessage(null), lines.length || over.length ? 9000 : 4000);
   }
 
-  async function planWeek() {
+  async function planWeek(plan: WorkPlanSettings | null = workPlan) {
+    // First time: ask how they like to work before planning anything.
+    if (!plan) {
+      setShowWorkPlan(true);
+      return;
+    }
     setPlanning(true);
     try {
       const ids = new Set(tasks.filter(t => !t.isDeleted && !t.isCompleted).map(t => String(t.id)));
-      const result = await replanTasks(tasks, ids);
+      const result = await replanTasks(tasks, ids, plannerPrefs(plan));
       const planned = new Set(result.sessions.map(s => s.taskId)).size;
-      reportPlan(result, tasks, planned ? `Planned ${planned} task${planned === 1 ? '' : 's'} into your free time.` : 'Nothing to plan — add a duration to a task to schedule it.');
+      reportPlan(result, tasks, planned ? `Planned ${planned} task${planned === 1 ? '' : 's'} into your free time.` : 'Nothing to plan — add a duration to a task to schedule it.', plan);
     } finally {
       setPlanning(false);
     }
@@ -1204,6 +1274,32 @@ export default function CalendarPage() {
     }
     setShowUnifiedModal(true);
   }
+
+  const quickAdd = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = quickText.trim();
+    if (!text || quickBusy) return;
+    setQuickBusy(true); setQuickError(null);
+    try {
+      const item = await parseText(text);
+      openModal(item.kind);
+      if (item.kind === 'event') {
+        setFormTitle(item.title); setFormDesc(item.description); setFormDate(item.date);
+        setFormStart(item.startTime); setFormEnd(item.endTime);
+        setFormRecurrenceType(item.recurrence.type); setFormRecurrenceDays(item.recurrence.days);
+        setCurrentDate(new Date(`${item.date}T00:00:00`));
+      } else {
+        setTaskTitle(item.title); setTaskDesc(item.description);
+        setTaskDuration(item.durationMinutes ?? ''); setTaskDeadline(item.deadline ?? '');
+        setTaskPriority(item.priority); setTaskEnergyLevel(item.energyLevel);
+      }
+      setQuickText('');
+    } catch (err) {
+      setQuickError(err instanceof Error ? err.message : "Couldn't read that.");
+    } finally {
+      setQuickBusy(false);
+    }
+  };
 
   const openAdd = (date: string, hour: number) => {
     const endHour = Math.min(hour + 1, 23);
@@ -1407,6 +1503,13 @@ export default function CalendarPage() {
       {/* Top Nav */}
       <div style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid #e5e5e5', gap: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Link
+            href="/"
+            title="Home"
+            aria-label="Home"
+            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', marginRight: 4 }}>
+            <House style={{ width: 16, height: 16 }} />
+          </Link>
           <button
             onClick={() => setCurrentDate(new Date())}
             onMouseEnter={() => setTodayHover(true)}
@@ -1447,10 +1550,29 @@ export default function CalendarPage() {
           + New Event
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid #e0e0e0', borderRadius: 8, padding: '6px 12px' }}>
-          <span style={{ color: '#aaa' }}>🔍</span>
-          <input placeholder="Search" style={{ border: 'none', outline: 'none', fontSize: 13, width: 140 }} />
-        </div>
+        <form onSubmit={quickAdd} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${quickError ? '#e53e3e' : '#e0e0e0'}`, borderRadius: 8, padding: '6px 6px 6px 12px' }}>
+          <Sparkles style={{ width: 14, height: 14, color: '#999', flexShrink: 0 }} />
+          <input
+            value={quickText}
+            onChange={e => { setQuickText(e.target.value); setQuickError(null); }}
+            placeholder='Quick add: "essay due fri, 3h"'
+            disabled={quickBusy}
+            maxLength={500}
+            style={{ border: 'none', outline: 'none', fontSize: 13, width: 220, background: 'transparent' }}
+          />
+          <button type="submit" disabled={quickBusy || !quickText.trim()} style={{
+            border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 12, fontWeight: 600,
+            background: quickText.trim() ? '#1a1a1a' : '#eee', color: quickText.trim() ? '#fff' : '#999',
+            cursor: quickBusy || !quickText.trim() ? 'default' : 'pointer', whiteSpace: 'nowrap',
+          }}>
+            {quickBusy ? 'Reading…' : 'Add'}
+          </button>
+          {quickError && (
+            <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, zIndex: 40, background: '#fff', border: '1px solid #f3c2c2', color: '#c53030', borderRadius: 8, padding: '6px 10px', fontSize: 12, boxShadow: '0 6px 16px rgba(0,0,0,0.08)' }}>
+              {quickError}
+            </div>
+          )}
+        </form>
 
         <div style={{ position: 'relative' }}>
           <button
@@ -1576,17 +1698,34 @@ export default function CalendarPage() {
                 + New Task
               </button>
             </div>
-            <button
-              onClick={planWeek}
-              disabled={planning}
-              title="Fit every task with a duration into your free time before its deadline"
-              style={{
-                width: '100%', padding: '8px 12px', borderRadius: 10, border: `1px solid ${accentColor}`,
-                background: 'transparent', color: '#1a1a1a', fontSize: 13, fontWeight: 600,
-                cursor: planning ? 'default' : 'pointer', opacity: planning ? 0.6 : 1,
-              }}>
-              {planning ? 'Planning…' : '✦ Plan my week'}
-            </button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => planWeek()}
+                disabled={planning}
+                title="Fit every task with a duration into your free time before its deadline"
+                style={{
+                  flex: 1, padding: '8px 12px', borderRadius: 10, border: `1px solid ${accentColor}`,
+                  background: 'transparent', color: '#1a1a1a', fontSize: 13, fontWeight: 600,
+                  cursor: planning ? 'default' : 'pointer', opacity: planning ? 0.6 : 1,
+                }}>
+                {planning ? 'Planning…' : '✦ Plan my week'}
+              </button>
+              <button
+                onClick={() => setShowWorkPlan(true)}
+                title="How you like to work: daily limit, session length, days"
+                aria-label="Planning settings"
+                style={{
+                  width: 36, borderRadius: 10, border: `1px solid ${accentColor}`, background: 'transparent',
+                  color: '#555', fontSize: 15, cursor: 'pointer',
+                }}>
+                ⚙
+              </button>
+            </div>
+            {workPlan && (
+              <p style={{ margin: '6px 2px 0', fontSize: 11, color: '#999' }}>
+                Up to {workPlan.dailyMinutes / 60}h a day · {workPlan.sessionMinutes}-min sessions · {workPlan.spread === 'steady' ? 'a little each day' : 'as early as possible'}
+              </p>
+            )}
             {planMessage && (
               <div role="status" style={{ marginTop: 8, borderRadius: 6, padding: '6px 10px', fontSize: 12, fontWeight: 600, lineHeight: 1.4,
                 background: planMessage.error ? '#fef2f2' : '#f0fdf4', color: planMessage.error ? '#b91c1c' : '#16a34a' }}>
@@ -1606,7 +1745,7 @@ export default function CalendarPage() {
             {tasks.filter(t => !t.isDeleted && !t.isCompleted).length === 0 ? (
               <div style={{ color: '#bbb', fontSize: 13, textAlign: 'center', marginTop: 32 }}>No tasks yet.<br />Click "+ New" to add one.</div>
             ) : (
-              tasks.filter(t => !t.isDeleted && !t.isCompleted).map((t, i) => {
+              tasks.filter(t => !t.isDeleted && !t.isCompleted).sort(byDeadline).map((t, i) => {
                 const isCompleting = completingTaskId === t.id;
                 return (
                 <div key={t.id ?? i} onClick={() => !isCompleting && openEditTask(t)}
@@ -1655,6 +1794,21 @@ export default function CalendarPage() {
           </div>
         </div>
       </div>
+
+      {showWorkPlan && (
+        <WorkPlanModal
+          initial={workPlan ?? DEFAULT_WORK_PLAN}
+          firstTime={!workPlan}
+          accentColor={accentColor}
+          textOnAccent={getTextColor(accentColor)}
+          onClose={() => setShowWorkPlan(false)}
+          onSave={(plan, replan) => {
+            setShowWorkPlan(false);
+            saveWorkPlan(plan);
+            if (replan) planWeek(plan);
+          }}
+        />
+      )}
 
       {/* Unified Modal */}
       {showUnifiedModal && (() => {

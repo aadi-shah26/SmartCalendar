@@ -71,7 +71,7 @@ export function buildInstructions(ctx: ParseContext): string {
     '- repeat: "every monday and wednesday" = weekly [1,3]; "every day" = daily. Otherwise none.',
     '- description: any extra detail the user gave that is not captured elsewhere, else empty.',
     '- Never invent details. Use null for anything not stated.',
-    '- Times are 24-hour HH:MM. "noon" = 12:00, "midnight" = 00:00, "3" with no am/pm means 15:00 unless it is clearly morning.',
+    '- Times are 24-hour HH:MM. "noon" = 12:00, "midnight" = 23:59 on that same day (so "due friday at midnight" is friday 23:59), "3" with no am/pm means 15:00 unless it is clearly morning.',
   ].join('\n');
 }
 
@@ -120,6 +120,7 @@ export function normalizeParse(raw: unknown, ctx: ParseContext): ParsedItem {
   if (r.kind === 'event') {
     const start = validTime(r.start_time) ?? '09:00';
     let end = validTime(r.end_time);
+    if (end === '00:00') end = '23:59'; // ends at midnight: stay on the same day
     if (!end || toMin(end) <= toMin(start)) end = fromMin(Math.min(toMin(start) + 60, 23 * 60 + 59));
     const repeat = r.repeat === 'daily' || r.repeat === 'weekly' ? r.repeat : 'none';
     const days = Array.isArray(r.repeat_days)
@@ -145,7 +146,8 @@ export function normalizeParse(raw: unknown, ctx: ParseContext): ParsedItem {
       kind: 'task',
       title,
       description,
-      deadline: date ? `${date}T${validTime(r.due_time) ?? '23:59'}` : null,
+      // "Due at midnight" means the end of that day, not the very start of it.
+      deadline: date ? `${date}T${(validTime(r.due_time) ?? '23:59').replace(/^00:00$/, '23:59')}` : null,
       durationMinutes: duration || null,
       priority: PRIORITIES.includes(r.priority as Priority) ? (r.priority as Priority) : 'Medium',
       energyLevel: ENERGIES.includes(r.energy_level as Energy) ? (r.energy_level as Energy) : 'Medium',

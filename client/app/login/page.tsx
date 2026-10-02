@@ -27,6 +27,7 @@ export default function Login() {
 
   return (
     <div style={containerStyle}>
+      <Link href="/" style={backLinkStyle}>← Home</Link>
       <div style={cardStyle}>
         <h1 style={headingStyle}>Welcome back</h1>
         <p style={textStyle}>Log in to your Smart Calendar</p>
@@ -64,7 +65,7 @@ export default function Login() {
   );
 }
 
-const containerStyle = { minHeight: '100vh', backgroundColor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif' };
+const containerStyle = { position: 'relative' as const, minHeight: '100vh', backgroundColor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif' };
 const cardStyle = { backgroundColor: '#ffffff', borderRadius: '32px', padding: '40px', width: '100%', maxWidth: '420px', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', textAlign: 'center' as const, boxShadow: '0 20px 40px rgba(0,0,0,0.3)' };
 const headingStyle = { fontSize: '2rem', fontWeight: '800', color: '#1a1a1a', marginBottom: '8px', letterSpacing: '-1px' };
 const textStyle = { fontSize: '1.05rem', color: '#333', marginBottom: '24px', lineHeight: '1.5' };
@@ -72,3 +73,4 @@ const inputContainerStyle = { width: '100%', marginBottom: '14px' };
 const inputStyle = { width: '100%', padding: '18px 20px', borderRadius: '18px', border: 'none', backgroundColor: '#e5e5e5', fontSize: '1.05rem', textAlign: 'center' as const, outline: 'none', boxSizing: 'border-box' as const };
 const submitButtonStyle = { width: '100%', padding: '16px', borderRadius: '22px', border: 'none', backgroundColor: '#1a1a1a', color: '#fff', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer', marginTop: '6px' };
 const errorStyle = { color: '#e53e3e', fontSize: '0.9rem', marginBottom: '14px', marginTop: '-4px' };
+const backLinkStyle = { position: 'absolute' as const, top: '24px', left: '24px', color: '#fff', fontSize: '0.95rem', fontWeight: 600, padding: '8px 14px', borderRadius: '999px', backgroundColor: 'rgba(255,255,255,0.08)' };

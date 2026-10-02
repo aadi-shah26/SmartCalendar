@@ -22,6 +22,13 @@ describe('normalizeParse', () => {
     expect(item).toMatchObject({ recurrence: { type: 'weekly', days: [1, 3] } });
   });
 
+  it('keeps "midnight" on the same day: due 00:00 becomes 23:59', () => {
+    const task = normalizeParse({ kind: 'task', title: 'Essay', date: '2026-10-02', due_time: '00:00', repeat: 'none' }, ctx);
+    expect(task).toMatchObject({ deadline: '2026-10-02T23:59' });
+    const event = normalizeParse({ kind: 'event', title: 'Party', date: '2026-10-02', start_time: '21:00', end_time: '00:00', repeat: 'none' }, ctx);
+    expect(event).toMatchObject({ date: '2026-10-02', startTime: '21:00', endTime: '23:59' });
+  });
+
   it('treats a weekly repeat with no days as not repeating', () => {
     const item = normalizeParse({ kind: 'event', title: 'Gym', date: '2026-10-05', start_time: '07:00', repeat: 'weekly', repeat_days: [] }, ctx);
     expect(item).toMatchObject({ recurrence: { type: 'none', days: [] } });

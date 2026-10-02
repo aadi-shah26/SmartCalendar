@@ -71,7 +71,6 @@ export default function Onboarding() {
               >
                 Continue with Email
               </button>
-              <button style={socialButtonStyle}>Continue with Google</button>
             </div>
             <p style={{ ...textStyle, fontSize: '0.9rem', marginTop: '20px', marginBottom: 0 }}>
               Already have an account? <Link href="/login" style={{ color: '#1a1a1a', fontWeight: 700 }}>Log in</Link>
@@ -188,6 +187,7 @@ export default function Onboarding() {
 
   return (
     <div style={containerStyle}>
+      <Link href="/" style={backLinkStyle}>← Home</Link>
       <div style={cardStyle}>
         <div style={headerStyle}>
           <div style={progressContainerStyle}>
@@ -195,7 +195,7 @@ export default function Onboarding() {
               <div key={i} style={{ ...progressPillStyle, backgroundColor: i + 1 === step ? '#1a1a1a' : '#e0e0e0' }} />
             ))}
           </div>
-          <button style={closeButtonStyle}>✕</button>
+          <button onClick={() => router.push('/')} style={closeButtonStyle} aria-label="Back to home">✕</button>
         </div>
 
         <div style={contentBodyStyle}>
@@ -223,7 +223,7 @@ export default function Onboarding() {
   );
 }
 
-const containerStyle = { minHeight: '100vh', backgroundColor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif' };
+const containerStyle = { position: 'relative' as const, minHeight: '100vh', backgroundColor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Inter, system-ui, sans-serif' };
 const cardStyle = { backgroundColor: '#ffffff', borderRadius: '32px', padding: '40px', width: '100%', maxWidth: '520px', minHeight: '580px', display: 'flex', flexDirection: 'column' as const, boxShadow: '0 20px 40px rgba(0,0,0,0.3)' };
 const headerStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '50px' };
 const progressContainerStyle = { display: 'flex', gap: '8px', flex: 1, marginRight: '20px' };
@@ -239,4 +239,4 @@ const inputContainerStyle = { width: '100%', marginTop: '10px' };
 const inputStyle = { width: '100%', padding: '30px', borderRadius: '28px', border: 'none', backgroundColor: '#e5e5e5', fontSize: '1.1rem', textAlign: 'center' as const, outline: 'none' };
 const navStyle = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '30px' };
 const nextButtonStyle = { padding: '14px 32px', borderRadius: '22px', border: 'none', backgroundColor: '#1a1a1a', color: '#fff', fontSize: '1.05rem', fontWeight: '700', cursor: 'pointer' };
-const secondaryButtonStyle = { background: 'none', border: 'none', color: '#1a1a1a', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' };
+const secondaryButtonStyle = { background: 'none', border: 'none', color: '#1a1a1a', fontSize: '1rem', fontWeight: '600', cursor: 'pointer' };const backLinkStyle = { position: 'absolute' as const, top: '24px', left: '24px', color: '#fff', fontSize: '0.95rem', fontWeight: 600, padding: '8px 14px', borderRadius: '999px', backgroundColor: 'rgba(255,255,255,0.08)' };

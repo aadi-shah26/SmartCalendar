@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planSessions, prefsForWorkTime, splitIntoPieces, hasConflicts, resolveConflicts, PlannerTask, ScheduledTask } from '../planner';
+import { planSessions, prefsForWorkTime, splitIntoPieces, hasConflicts, resolveConflicts, DEFAULT_WORK_PLAN, PlannerTask, ScheduledTask } from '../planner';
 
 // Local wall-clock times, so the tests pass in any timezone.
 const at = (day: number, h: number, m = 0) => new Date(2026, 9, day, h, m).getTime(); // Oct 2026
@@ -26,6 +26,77 @@ describe('splitIntoPieces', () => {
   });
   it('returns nothing for zero-duration tasks', () => {
     expect(splitIntoPieces(task({ durationMinutes: 0 }))).toEqual([]);
+  });
+});
+
+describe('planSessions with work-plan settings', () => {
+  const plan = (over: Partial<typeof DEFAULT_WORK_PLAN> = {}) => prefsForWorkTime('day', null, { ...DEFAULT_WORK_PLAN, ...over });
+  const dayOf = (ms: number) => new Date(ms).toDateString();
+  const minutesByDay = (sessions: { startMs: number; endMs: number }[]) => {
+    const m = new Map<string, number>();
+    for (const s of sessions) m.set(dayOf(s.startMs), (m.get(dayOf(s.startMs)) ?? 0) + (s.endMs - s.startMs) / 60_000);
+    return m;
+  };
+
+  it('splits a long task into sessions of the chosen length', () => {
+    expect(splitIntoPieces(task({ durationMinutes: 540 }), 60)).toEqual(Array(9).fill(60));
+    expect(splitIntoPieces(task({ durationMinutes: 70 }), 60)).toEqual([70]); // only a little over: keep whole
+    expect(splitIntoPieces(task({ durationMinutes: 180, chunk: { min: 30, max: 90 } }), 60)).toEqual([90, 90]); // task's own size wins
+  });
+
+  it('spreads a 9-hour task over several days instead of one long block', () => {
+    const { sessions, unplaced, overLimit } = planSessions(
+      [task({ durationMinutes: 540, deadlineMs: at(12, 23, 59) })], [], plan({ dailyMinutes: 120 }), NOW);
+    expect(unplaced).toEqual([]);
+    expect(overLimit).toEqual([]);
+    expect(sessions.reduce((n, s) => n + (s.endMs - s.startMs) / 60_000, 0)).toBe(540);
+    expect(Math.max(...sessions.map(s => s.endMs - s.startMs)) / 60_000).toBeLessThanOrEqual(60);
+    const byDay = minutesByDay(sessions);
+    expect(byDay.size).toBeGreaterThanOrEqual(5);
+    for (const mins of byDay.values()) expect(mins).toBeLessThanOrEqual(120);
+    for (const s of sessions) expect(s.endMs).toBeLessThanOrEqual(at(12, 23, 59));
+  });
+
+  it('keeps the daily limit across all tasks together', () => {
+    const tasks = [
+      task({ id: 'a', durationMinutes: 180, deadlineMs: at(9, 22) }),
+      task({ id: 'b', durationMinutes: 180, deadlineMs: at(9, 22) }),
+      task({ id: 'c', durationMinutes: 120, deadlineMs: at(10, 22) }),
+    ];
+    const { sessions, unplaced } = planSessions(tasks, [], plan({ dailyMinutes: 120 }), NOW);
+    expect(unplaced).toEqual([]);
+    for (const mins of minutesByDay(sessions).values()) expect(mins).toBeLessThanOrEqual(120);
+  });
+
+  it("counts other tasks' existing sessions toward the limit", () => {
+    const existing = [{ startMs: at(5, 13), endMs: at(5, 15) }, { startMs: at(6, 13), endMs: at(6, 15) }];
+    const { sessions } = planSessions(
+      [task({ durationMinutes: 60, deadlineMs: at(9, 22) })], existing, plan({ dailyMinutes: 120 }), NOW, undefined, existing);
+    expect([dayOf(at(5, 0)), dayOf(at(6, 0))]).not.toContain(dayOf(sessions[0].startMs));
+  });
+
+  it('only uses the chosen work days', () => {
+    // Mon/Wed/Fri only
+    const { sessions } = planSessions(
+      [task({ durationMinutes: 240, deadlineMs: at(16, 22) })], [], plan({ workDays: [1, 3, 5] }), NOW);
+    for (const s of sessions) expect([1, 3, 5]).toContain(new Date(s.startMs).getDay());
+  });
+
+  it('goes over the limit rather than miss a deadline, and says so', () => {
+    const { sessions, unplaced, overLimit } = planSessions(
+      [task({ id: 'x', durationMinutes: 240, deadlineMs: at(5, 22) })], [], plan({ dailyMinutes: 60 }), NOW);
+    expect(unplaced).toEqual([]);
+    expect(overLimit).toEqual(['x']);
+    expect(sessions.reduce((n, s) => n + (s.endMs - s.startMs) / 60_000, 0)).toBe(240);
+  });
+
+  it('asap mode finishes sooner than steady mode', () => {
+    const t = [task({ durationMinutes: 240, deadlineMs: at(16, 22) })];
+    const lastEnd = (r: { sessions: { endMs: number }[] }) => Math.max(...r.sessions.map(s => s.endMs));
+    const asap = planSessions(t, [], plan({ spread: 'asap', dailyMinutes: 240 }), NOW);
+    const steady = planSessions(t, [], plan({ spread: 'steady', dailyMinutes: 240 }), NOW);
+    expect(lastEnd(asap)).toBeLessThan(lastEnd(steady));
+    expect(minutesByDay(steady.sessions).size).toBeGreaterThan(1);
   });
 });
 
