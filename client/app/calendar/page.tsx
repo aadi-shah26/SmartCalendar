@@ -343,7 +343,9 @@ const SESSION_STRIPES: React.CSSProperties = {
 // (a 30-min block is ~28px), so the title gets sliced mid-glyph. Short
 // blocks instead render title and time on a single, vertically centred line.
 const COMPACT_EVENT_HEIGHT = 44;
-const TINY_EVENT_HEIGHT = 20;
+// Blocks never draw shorter than this, so a 15-min event stays readable
+// (it overhangs its end slightly, as in Google Calendar).
+const MIN_EVENT_HEIGHT = 22;
 
 function EventBlockBody({ ev, height, isSched, timeLabel, size }: {
   ev: CalendarEvent; height: number; isSched: boolean; timeLabel: string; size: 'sm' | 'md';
@@ -351,14 +353,18 @@ function EventBlockBody({ ev, height, isSched, timeLabel, size }: {
   const iconSize = size === 'sm' ? 10 : 12;
   const icon = isSched && <ListChecks style={{ width: iconSize, height: iconSize, flexShrink: 0 }} />;
   if (height < COMPACT_EVENT_HEIGHT) {
-    const tiny = height < TINY_EVENT_HEIGHT;
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, height: '100%', minWidth: 0,
-        whiteSpace: 'nowrap', lineHeight: 1.15, fontSize: tiny ? (size === 'sm' ? 10 : 11) : undefined }}>
-        {icon}
-        <span style={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</span>
-        {/* time yields width before the title does */}
-        <span style={{ flex: '0 100 auto', minWidth: 0, overflow: 'hidden', opacity: 0.75, fontWeight: 500, fontSize: '0.85em' }}>{timeLabel}</span>
+      <div style={{ display: 'flex', alignItems: 'center', height: '100%', minWidth: 0 }}>
+        {/* One fixed-height wrapping row: when the time doesn't fit beside the title it
+            wraps onto a hidden second line instead of being cut mid-character. */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 4,
+          height: 16, lineHeight: '16px', overflow: 'hidden', minWidth: 0, width: '100%', whiteSpace: 'nowrap' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 3, flex: '0 1 auto', minWidth: 0, alignSelf: 'center' }}>
+            {icon}
+            <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</span>
+          </span>
+          <span style={{ flex: '0 0 auto', opacity: 0.75, fontWeight: 500, fontSize: '0.85em' }}>{timeLabel}</span>
+        </div>
       </div>
     );
   }
@@ -417,7 +423,7 @@ function getEventPosition(ev: CalendarEvent): { top: number; height: number } | 
     return { top, height: TASK_PILL_HEIGHT };
   }
   const durMin = Math.max(endMin - startMin, 15);
-  return { top: (startMin / 60) * HOUR_HEIGHT, height: (durMin / 60) * HOUR_HEIGHT };
+  return { top: (startMin / 60) * HOUR_HEIGHT, height: Math.max((durMin / 60) * HOUR_HEIGHT, MIN_EVENT_HEIGHT) };
 }
 
 function getWeekStart(date: Date) {
