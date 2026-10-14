@@ -339,6 +339,42 @@ const SESSION_STRIPES: React.CSSProperties = {
   backgroundImage: 'repeating-linear-gradient(135deg, rgba(255,255,255,0.45) 0 6px, transparent 6px 12px)',
 };
 
+// Below this pixel height the time + title two-line layout doesn't fit
+// (a 30-min block is ~28px), so the title gets sliced mid-glyph. Short
+// blocks instead render title and time on a single, vertically centred line.
+const COMPACT_EVENT_HEIGHT = 44;
+const TINY_EVENT_HEIGHT = 20;
+
+function EventBlockBody({ ev, height, isSched, timeLabel, size }: {
+  ev: CalendarEvent; height: number; isSched: boolean; timeLabel: string; size: 'sm' | 'md';
+}) {
+  const iconSize = size === 'sm' ? 10 : 12;
+  const icon = isSched && <ListChecks style={{ width: iconSize, height: iconSize, flexShrink: 0 }} />;
+  if (height < COMPACT_EVENT_HEIGHT) {
+    const tiny = height < TINY_EVENT_HEIGHT;
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, height: '100%', minWidth: 0,
+        whiteSpace: 'nowrap', lineHeight: 1.15, fontSize: tiny ? (size === 'sm' ? 10 : 11) : undefined }}>
+        {icon}
+        <span style={{ flex: '0 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.title}</span>
+        {/* time yields width before the title does */}
+        <span style={{ flex: '0 100 auto', minWidth: 0, overflow: 'hidden', opacity: 0.75, fontWeight: 500, fontSize: '0.85em' }}>{timeLabel}</span>
+      </div>
+    );
+  }
+  const descSize = size === 'sm' ? 10 : 11;
+  return (
+    <>
+      <div style={{ fontSize: descSize, opacity: 0.75, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: size === 'sm' ? 3 : 4 }}>
+        {icon}
+        {timeLabel}
+      </div>
+      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
+      {ev.description && height > 54 && <div style={{ fontSize: descSize, opacity: 0.7, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.description}</div>}
+    </>
+  );
+}
+
 function formatDuration(min: number) {
   if (min < 60) return `${min}m`;
   const h = Math.floor(min / 60);
@@ -546,15 +582,11 @@ function WeekView({ currentDate, events, openAdd, openDetail, accentColor }: {
                           width: `calc(${(1 / totalCols) * 100}% - 4px)`,
                           top: top + 1, height: height - 2,
                           overflow: 'hidden', boxSizing: 'border-box', zIndex: 1,
-                          padding: '3px 6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', lineHeight: 1.3,
+                          padding: height < COMPACT_EVENT_HEIGHT ? '0 6px' : '3px 6px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', lineHeight: 1.3,
                           transition: isSched ? 'top 0.5s cubic-bezier(0.4,0,0.2,1), height 0.5s cubic-bezier(0.4,0,0.2,1)' : undefined,
                         }}>
-                        <div style={{ fontSize: '10px', opacity: 0.75, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 3 }}>
-                          {isSched && <ListChecks style={{ width: 10, height: 10, flexShrink: 0 }} />}
-                          {formatEventTime(ev.start_time)}
-                        </div>
-                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
-                        {ev.description && height > 54 && <div style={{ fontSize: '10px', opacity: 0.7, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.description}</div>}
+                        <EventBlockBody ev={ev} height={height} isSched={isSched} size="sm"
+                          timeLabel={formatEventTime(ev.start_time)} />
                       </div>
                     );
                   })}
@@ -642,15 +674,11 @@ function DayView({ currentDate, events, openAdd, openDetail, accentColor }: {
                   width: `calc(${(1 / totalCols) * 100}% - 8px)`,
                   top: top + 1, height: height - 2,
                   overflow: 'hidden', boxSizing: 'border-box',
-                  padding: '4px 10px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  padding: height < COMPACT_EVENT_HEIGHT ? '0 10px' : '4px 10px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
                   transition: isSched ? 'top 0.5s cubic-bezier(0.4,0,0.2,1), height 0.5s cubic-bezier(0.4,0,0.2,1)' : undefined,
                 }}>
-                <div style={{ fontSize: 11, opacity: 0.75, whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  {isSched && <ListChecks style={{ width: 12, height: 12, flexShrink: 0 }} />}
-                  {formatEventTime(ev.start_time)} – {formatEventTime(ev.end_time)}
-                </div>
-                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
-                {ev.description && height > 54 && <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.description}</div>}
+                <EventBlockBody ev={ev} height={height} isSched={isSched} size="md"
+                  timeLabel={`${formatEventTime(ev.start_time)} – ${formatEventTime(ev.end_time)}`} />
               </div>
             );
           })}
