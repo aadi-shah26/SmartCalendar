@@ -72,6 +72,5 @@ client/            Next.js app
   lib/nlp/         Turns plain-English input into events and tasks (via Gemini)
   lib/google/      Google Calendar sync
 supabase/          Database schema
-scheduler-backend/ Experimental Python scheduler (not used by the web app)
 docs/              Setup guides
 ```

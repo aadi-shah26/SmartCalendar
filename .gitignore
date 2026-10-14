@@ -35,10 +35,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-#python
-.venv
-venv
-__pycache__
-
-#misc
-test_outputs
+# editors
+.idea/
+.vscode/
