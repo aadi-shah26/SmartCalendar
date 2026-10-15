@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emptyTaskForm, eventFormAtHour, eventFormFromEvent, eventFormRecurrence, newEventForm, taskFormFromTask, taskRowFromForm } from '../forms';
+import { emptyTaskForm, eventFormAtHour, eventFormFromEvent, eventFormRecurrence, newEventForm, shiftEndWithStart, taskFormFromTask, taskRowFromForm } from '../forms';
 import { taskFromRow } from '../tasks';
 
 describe('event form', () => {
@@ -40,5 +40,20 @@ describe('task form', () => {
   });
   it('treats blank numbers as zero', () => {
     expect(taskRowFromForm({ ...emptyTaskForm('#1a1a1a'), isSplittable: true })).toMatchObject({ duration_minutes: 0, chunk_min: 0, chunk_max: 0, deadline: null });
+  });
+});
+
+describe('moving an event start', () => {
+  it('keeps the length, like Google Calendar', () => {
+    expect(shiftEndWithStart('09:00', '10:30', '14:00')).toBe('15:30');
+    expect(shiftEndWithStart('09:00', '09:15', '09:45')).toBe('10:00');
+  });
+  it('makes a zero-length event an hour long and stops at 23:59', () => {
+    expect(shiftEndWithStart('23:00', '23:00', '10:00')).toBe('11:00');
+    expect(shiftEndWithStart('09:00', '11:00', '23:00')).toBe('23:59');
+  });
+  it('rounds a length that was cut short at 23:59 back to the 15-minute grid', () => {
+    expect(shiftEndWithStart('23:30', '23:59', '15:00')).toBe('15:30');
+    expect(shiftEndWithStart('09:00', '09:29', '15:00')).toBe('15:29');
   });
 });

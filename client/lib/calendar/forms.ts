@@ -1,7 +1,7 @@
 // The event and task forms in the add/edit modal: their fields, how they're filled from
 // existing items, and how they turn back into database rows.
 import { THEME_COLOR } from './colors';
-import { formatTimeStr, toLocalISO } from './dates';
+import { formatTimeStr, minutesOfDay, timeOfDay, toLocalISO } from './dates';
 import type { CalendarEvent, EnergyLevel, Recurrence, RecurrenceType, Task, TaskPriority } from './types';
 
 /** The modal's two tabs. */
@@ -42,6 +42,18 @@ export function newEventForm(date: string, start: string, end: string, color: st
 /** A new event lasting the hour that starts at `hour` (the last slot of the day stays 23:00). */
 export function eventFormAtHour(date: string, hour: number, color: string): EventForm {
   return newEventForm(date, formatTimeStr(hour), formatTimeStr(Math.min(hour + 1, 23)), color);
+}
+
+/**
+ * The new end time when the start moves: keeps the event's length, like Google Calendar.
+ * An event with no positive length becomes an hour long. Never runs past 23:59; an end that
+ * was cut short there gets its length rounded back up to the 15-minute grid.
+ */
+export function shiftEndWithStart(oldStart: string, oldEnd: string, newStart: string): string {
+  let length = minutesOfDay(oldEnd) - minutesOfDay(oldStart);
+  if (length <= 0) length = 60;
+  else if (oldEnd.startsWith('23:59')) length = Math.ceil(length / 15) * 15;
+  return timeOfDay(minutesOfDay(newStart) + length);
 }
 
 export function eventFormFromEvent(ev: CalendarEvent): EventForm {
