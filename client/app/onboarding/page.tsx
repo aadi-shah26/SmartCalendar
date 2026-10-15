@@ -15,7 +15,7 @@ export default function Onboarding() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
-  const [gcalEmail, setGcalEmail] = useState('');
+  const [gcalEmail] = useState('');
   const [isCompleting, setIsCompleting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -50,7 +50,7 @@ export default function Onboarding() {
       }
 
       router.push(connectGoogle ? '/calendar?connectGoogle=1' : '/calendar');
-    } catch (err) {
+    } catch {
       setAuthError('Something went wrong. Please try again.');
       setIsCompleting(false);
     }
@@ -62,7 +62,7 @@ export default function Onboarding() {
         return (
           <>
             <h2 style={headingStyle}>Welcome to Smart Calendar</h2>
-            <p style={textStyle}>Let's create your account</p>
+            <p style={textStyle}>Let&apos;s create your account</p>
             <div style={buttonGroupStyle}>
               <button
                 className="onboard-button onboard-button--primary"
@@ -120,7 +120,7 @@ export default function Onboarding() {
       case 6:
         return (
           <>
-            <h2 style={headingStyle}>What's your work style?</h2>
+            <h2 style={headingStyle}>What&apos;s your work style?</h2>
             <div style={{ display: 'flex', gap: '1.5rem', justifyContent: 'center', marginTop: '1.5rem' }}>
               <button onClick={() => setWorkStyle('social')} style={{ padding: '1.2rem 1.8rem', borderRadius: '12px', border: '2px solid', borderColor: workStyle === 'social' ? '#1a1a1a' : '#e5e5e5', backgroundColor: 'transparent', color: '#1a1a1a', cursor: 'pointer', fontSize: '1.1rem', fontWeight: 600 }}>Social</button>
               <button onClick={() => setWorkStyle('solo')} style={{ padding: '1.2rem 1.8rem', borderRadius: '12px', border: '2px solid', borderColor: workStyle === 'solo' ? '#1a1a1a' : '#e5e5e5', backgroundColor: 'transparent', color: '#1a1a1a', cursor: 'pointer', fontSize: '1.1rem', fontWeight: 600 }}>Solo</button>

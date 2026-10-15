@@ -67,7 +67,9 @@ npm test
 ```
 client/            Next.js app
   app/             Pages and API routes (/calendar, /login, /onboarding, /api/*)
-  components/      UI components
+  app/calendar/hooks/  Calendar page state: data loading, saving, planning, Google sync
+  components/      UI components (calendar/ holds the calendar views, sidebar and modals)
+  lib/calendar/    Calendar logic: dates, event layout, task and form conversions
   lib/scheduler/   Plans task work sessions into free time
   lib/nlp/         Turns plain-English input into events and tasks (via Gemini)
   lib/google/      Google Calendar sync

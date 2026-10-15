@@ -58,7 +58,7 @@ export default function Login() {
           </button>
         </form>
         <p style={{ ...textStyle, fontSize: '0.9rem', marginTop: '20px', marginBottom: 0 }}>
-          Don't have an account? <Link href="/onboarding" style={{ color: '#1a1a1a', fontWeight: 700 }}>Sign up</Link>
+          Don&apos;t have an account? <Link href="/onboarding" style={{ color: '#1a1a1a', fontWeight: 700 }}>Sign up</Link>
         </p>
       </div>
     </div>
