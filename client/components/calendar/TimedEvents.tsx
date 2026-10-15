@@ -1,10 +1,10 @@
-import { ListChecks } from 'lucide-react';
+import { ListChecks, Pin } from 'lucide-react';
 import { getTextColor } from '../../lib/calendar/colors';
 import { formatDuration, formatEventTime } from '../../lib/calendar/dates';
 import { isTaskEventId } from '../../lib/calendar/events';
 import { COMPACT_EVENT_HEIGHT, TASK_PILL_HEIGHT, computeEventLayouts } from '../../lib/calendar/layout';
 import type { CalendarEvent } from '../../lib/calendar/types';
-import { SESSION_STRIPES } from './styles';
+import { SESSION_STRIPES, sessionStatusStyle } from './styles';
 
 // Week view packs seven columns, so its blocks are smaller than the single-column day view's.
 const SIZES = {
@@ -22,7 +22,9 @@ function EventBlockBody({ ev, height, isSched, timeLabel, size }: {
   ev: CalendarEvent; height: number; isSched: boolean; timeLabel: string; size: Size;
 }) {
   const s = SIZES[size];
-  const icon = isSched && <ListChecks style={{ width: s.iconSize, height: s.iconSize, flexShrink: 0 }} />;
+  const icon = isSched && (ev.sessionPinned
+    ? <Pin aria-label="Pinned" style={{ width: s.iconSize, height: s.iconSize, flexShrink: 0 }} />
+    : <ListChecks style={{ width: s.iconSize, height: s.iconSize, flexShrink: 0 }} />);
   if (height < COMPACT_EVENT_HEIGHT) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', height: '100%', minWidth: 0 }}>
@@ -92,10 +94,10 @@ export function DayEvents({ events, size, accentColor, onOpen, timeLabel }: {
         return (
           <div key={ev.id} onClick={e => { e.stopPropagation(); onOpen(ev); }}
             className={isSched ? 'sched-event-enter' : undefined}
-            title={isSched ? 'From a task' : undefined}
+            title={ev.isTaskSession ? 'Work session: click to check in, pin, or say you can\'t make it' : isSched ? 'From a task' : undefined}
             style={{ position: 'absolute', backgroundColor: bg, color: fg, borderRadius: s.radius,
               border: isSched ? `1.5px dashed ${fg}` : 'none',
-              ...(ev.isTaskSession ? SESSION_STRIPES : {}),
+              ...(ev.isTaskSession ? { ...SESSION_STRIPES, ...sessionStatusStyle(ev.sessionStatus) } : {}),
               ...columnPosition(col, totalCols, s.inset),
               top: top + 1, height: height - 2,
               overflow: 'hidden', boxSizing: 'border-box', zIndex: s.zIndex,

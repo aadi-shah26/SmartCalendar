@@ -1,10 +1,43 @@
 import { Pencil } from 'lucide-react';
 import { getTextColor } from '../../lib/calendar/colors';
-import { formatDeadline } from '../../lib/calendar/dates';
+import { formatDeadline, formatDuration } from '../../lib/calendar/dates';
 import { byDeadline } from '../../lib/calendar/events';
-import { isActiveTask } from '../../lib/calendar/tasks';
-import type { StatusMessage, Task } from '../../lib/calendar/types';
-import type { WorkPlanSettings } from '../../lib/scheduler';
+import { describeAtRisk } from '../../lib/calendar/replanMessages';
+import { isActiveTask, type CheckIn, type PendingCheckIn } from '../../lib/calendar/tasks';
+import type { StatusMessage, Task, TaskSession } from '../../lib/calendar/types';
+import type { AtRisk, WorkPlanSettings } from '../../lib/scheduler';
+
+const MAX_CHECK_INS = 4;
+
+const smallButton = { padding: '3px 8px', borderRadius: 6, border: '1px solid #e0e0e0', background: '#fff', fontSize: 11, fontWeight: 600, cursor: 'pointer', color: '#1a1a1a' };
+
+/** Ended sessions nobody has answered for: one tap each, and the plan adjusts. */
+function CheckInTray({ items, onCheckIn, onOpenSession }: {
+  items: PendingCheckIn[];
+  onCheckIn: (taskId: string, session: TaskSession, change: CheckIn) => void;
+  onOpenSession: (taskId: string, index: number) => void;
+}) {
+  const when = (iso: string) => new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  const minutes = (p: PendingCheckIn) => Math.round((Date.parse(p.session.end) - Date.parse(p.session.start)) / 60_000);
+  return (
+    <div style={{ borderRadius: 10, border: '1px solid #e0e7ff', background: '#f5f7ff', padding: '8px 10px', marginBottom: 4 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#3730a3', marginBottom: 6 }}>How did these go?</div>
+      {items.slice(0, MAX_CHECK_INS).map(p => (
+        <div key={`${p.taskId}-${p.index}`} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0' }}>
+          <button onClick={() => onOpenSession(p.taskId, p.index)} title="More options"
+            style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#1a1a1a' }}>{p.title}</div>
+            <div style={{ fontSize: 11, color: '#888' }}>{when(p.session.start)} · {formatDuration(minutes(p))}</div>
+          </button>
+          <button style={smallButton} onClick={() => onCheckIn(p.taskId, p.session, { status: 'done' })}>Done</button>
+          <button style={smallButton} onClick={() => onOpenSession(p.taskId, p.index)}>Partly</button>
+          <button style={smallButton} onClick={() => onCheckIn(p.taskId, p.session, { status: 'skipped' })}>Missed</button>
+        </div>
+      ))}
+      {items.length > MAX_CHECK_INS && <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>+{items.length - MAX_CHECK_INS} more</div>}
+    </div>
+  );
+}
 
 function TaskRow({ task, isCompleting, onOpen, onComplete }: {
   task: Task; isCompleting: boolean; onOpen: () => void; onComplete: () => void;
@@ -48,15 +81,18 @@ function TaskRow({ task, isCompleting, onOpen, onComplete }: {
 }
 
 export default function TaskSidebar({
-  tasks, accentColor, workPlan, planning, planMessage, createdMessage, completingTaskId, showUndo,
-  onNewTask, onPlanWeek, onOpenWorkPlan, onOpenTask, onCompleteTask, onUndoDelete,
+  tasks, accentColor, workPlan, planning, planMessage, createdMessage, completingTaskId, showUndo, atRisk, checkIns,
+  onNewTask, onPlanWeek, onOpenWorkPlan, onOpenTask, onCompleteTask, onUndoDelete, onCheckIn, onOpenSession,
 }: {
   tasks: Task[]; accentColor: string; workPlan: WorkPlanSettings | null;
   planning: boolean; planMessage: StatusMessage | null; createdMessage: string | null;
-  completingTaskId: string | null; showUndo: boolean;
+  completingTaskId: string | null; showUndo: boolean; atRisk: AtRisk[]; checkIns: PendingCheckIn[];
   onNewTask: () => void; onPlanWeek: () => void; onOpenWorkPlan: () => void;
   onOpenTask: (t: Task) => void; onCompleteTask: (id: string) => void; onUndoDelete: () => void;
+  onCheckIn: (taskId: string, session: TaskSession, change: CheckIn) => void;
+  onOpenSession: (taskId: string, index: number) => void;
 }) {
+  const title = (id: string) => tasks.find(t => String(t.id) === id)?.title ?? 'A task';
   const activeTasks = tasks.filter(isActiveTask);
   return (
     <div style={{ width: 300, borderLeft: '1px solid #e5e5e5', display: 'flex', flexDirection: 'column', background: '#fafafa' }}>
@@ -109,6 +145,22 @@ export default function TaskSidebar({
 
       {/* Task List */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {atRisk.map(r => {
+          const task = tasks.find(t => String(t.id) === r.taskId);
+          return (
+            <div key={r.taskId} role="alert" style={{ borderRadius: 10, border: '1px solid #fecaca', background: '#fef2f2', padding: '8px 10px', fontSize: 12, color: '#991b1b', lineHeight: 1.4 }}>
+              {describeAtRisk(r, title)}
+              {task && (
+                <div style={{ marginTop: 4 }}>
+                  <button onClick={() => onOpenTask(task)} style={{ fontSize: 12, color: '#991b1b', fontWeight: 700, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}>
+                    Change the deadline or how long it takes
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {checkIns.length > 0 && <CheckInTray items={checkIns} onCheckIn={onCheckIn} onOpenSession={onOpenSession} />}
         {createdMessage && (
           <div style={{ borderRadius: 6, background: '#f0fdf4', padding: '6px 10px', fontSize: 12, color: '#16a34a', fontWeight: 600 }}>{createdMessage}</div>
         )}

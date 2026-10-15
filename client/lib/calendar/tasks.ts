@@ -1,6 +1,6 @@
-import { PLANNING_HORIZON_DAYS, type PlannerTask, type ScheduledTask } from '../scheduler';
+import { isUpcoming, PLANNING_HORIZON_DAYS, type PlannerTask, type SessionStatus, type TrackedSession, type TrackedTask } from '../scheduler';
 import { expandEvents, isTaskEventId } from './events';
-import type { CalendarEvent, Task, TaskRow } from './types';
+import type { CalendarEvent, Task, TaskRow, TaskSession } from './types';
 
 type Span = { startMs: number; endMs: number };
 
@@ -54,13 +54,62 @@ export function toPlannerTask(t: Task): PlannerTask {
   };
 }
 
-export function toScheduledTask(t: Task): ScheduledTask {
+const STATUSES: SessionStatus[] = ['planned', 'done', 'partial', 'skipped'];
+
+export function sessionFromRow(s: TaskSession): TrackedSession {
   return {
-    ...toPlannerTask(t),
-    sessions: (t.sessions ?? []).map(s => ({
-      startMs: new Date(s.start).getTime(), endMs: new Date(s.end).getTime(),
-    })),
+    startMs: new Date(s.start).getTime(),
+    endMs: new Date(s.end).getTime(),
+    ...(STATUSES.includes(s.status as SessionStatus) ? { status: s.status } : {}),
+    ...(s.status === 'partial' && Number.isFinite(s.doneMinutes) ? { doneMinutes: s.doneMinutes } : {}),
+    ...(s.pinned ? { pinned: true } : {}),
   };
+}
+
+/** Back to the stored shape, leaving out fields that aren't set. */
+export function sessionToRow(s: TrackedSession): TaskSession {
+  return {
+    start: new Date(s.startMs).toISOString(),
+    end: new Date(s.endMs).toISOString(),
+    ...(s.status ? { status: s.status } : {}),
+    ...(s.status === 'partial' && s.doneMinutes !== undefined ? { doneMinutes: s.doneMinutes } : {}),
+    ...(s.pinned ? { pinned: true } : {}),
+  };
+}
+
+export function toTrackedTask(t: Task): TrackedTask {
+  return { ...toPlannerTask(t), sessions: (t.sessions ?? []).map(sessionFromRow) };
+}
+
+/** A task's sessions with every upcoming one dropped except pinned and under-way ones. */
+export function withoutMovableSessions(t: Task, nowMs: number): Task {
+  return {
+    ...t,
+    sessions: (t.sessions ?? []).filter(row => {
+      const s = sessionFromRow(row);
+      return !isUpcoming(s, nowMs) || s.pinned || s.startMs < nowMs;
+    }),
+  };
+}
+
+export type CheckIn =
+  | { status: 'done' | 'skipped' | 'planned' }
+  | { status: 'partial'; doneMinutes: number };
+
+/** A copy of the task with one session's check-in (or pin) changed. */
+export function updateSession(t: Task, index: number, change: CheckIn | { pinned: boolean }): Task {
+  const sessions = (t.sessions ?? []).map((row, i): TaskSession => {
+    if (i !== index) return row;
+    const next: TaskSession = { ...row };
+    if ('pinned' in change) {
+      delete next.pinned;
+      return change.pinned ? { ...next, status: next.status ?? 'planned', pinned: true } : next;
+    }
+    delete next.doneMinutes;
+    if (change.status === 'partial') return { ...next, status: 'partial', doneMinutes: change.doneMinutes };
+    return { ...next, status: change.status };
+  });
+  return { ...t, sessions };
 }
 
 // Time nothing may be scheduled over: events (recurring ones expanded) and fixed-time tasks.
@@ -85,12 +134,29 @@ export function fixedBusyIntervals(events: CalendarEvent[], taskList: Task[], no
   return busy;
 }
 
-// The sessions of every task that isn't being re-planned. They block time and count
-// toward each day's work limit.
-export function otherSessions(taskList: Task[], replanning: Set<string>): Span[] {
-  return taskList
-    .filter(t => isPlannable(t) && !replanning.has(String(t.id)))
-    .flatMap(t => toScheduledTask(t).sessions);
+/** How far back unanswered sessions are still asked about. */
+const CHECK_IN_LOOKBACK_MS = 7 * 86_400_000;
+
+export interface PendingCheckIn {
+  taskId: string;
+  index: number;
+  title: string;
+  session: TaskSession;
+}
+
+/** Sessions that have ended with nobody saying how they went, oldest first. */
+export function pendingCheckIns(taskList: Task[], nowMs: number): PendingCheckIn[] {
+  const out: PendingCheckIn[] = [];
+  for (const t of taskList) {
+    if (!isActiveTask(t)) continue;
+    (t.sessions ?? []).forEach((row, index) => {
+      const s = sessionFromRow(row);
+      if (s.status === 'planned' && s.endMs <= nowMs && nowMs - s.endMs < CHECK_IN_LOOKBACK_MS) {
+        out.push({ taskId: String(t.id), index, title: t.title, session: row });
+      }
+    });
+  }
+  return out.sort((a, b) => Date.parse(a.session.start) - Date.parse(b.session.start));
 }
 
 /** Changes when any field the planner looks at changes. */

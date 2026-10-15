@@ -5,6 +5,7 @@ import type { ParsedItem } from '../../lib/nlp/parse';
 import { getTextColor } from '../../lib/calendar/colors';
 import { toDateKey } from '../../lib/calendar/dates';
 import { expandEvents, isTaskEventId, taskIdFromCalendarId } from '../../lib/calendar/events';
+import { pendingCheckIns } from '../../lib/calendar/tasks';
 import type { CalendarEvent, ViewMode } from '../../lib/calendar/types';
 import WorkPlanModal from '../../components/WorkPlanModal';
 import { DateNavigator, ViewSwitcher } from '../../components/calendar/CalendarToolbar';
@@ -14,6 +15,7 @@ import MonthView from '../../components/calendar/MonthView';
 import ProfileMenu from '../../components/calendar/ProfileMenu';
 import ProfileModal from '../../components/calendar/ProfileModal';
 import QuickAddBar from '../../components/calendar/QuickAddBar';
+import SessionModal from '../../components/calendar/SessionModal';
 import TaskSidebar from '../../components/calendar/TaskSidebar';
 import WeekView from '../../components/calendar/WeekView';
 import YearView from '../../components/calendar/YearView';
@@ -39,6 +41,15 @@ export default function CalendarPage() {
   const [view, setView] = useState<ViewMode>('Week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showProfile, setShowProfile] = useState(false);
+  // The open work session, found by its times: a replan can reorder a task's sessions.
+  const [openSession, setOpenSession] = useState<{ taskId: string; start: string; end: string; openedAt: number } | null>(null);
+  const sessionTask = openSession ? tasks.find(t => String(t.id) === openSession.taskId) : undefined;
+  const session = openSession ? sessionTask?.sessions?.find(s => s.start === openSession.start && s.end === openSession.end) : undefined;
+  const showSession = (taskId: string, index: number) => {
+    const row = tasks.find(t => String(t.id) === taskId)?.sessions?.[index];
+    if (row) setOpenSession({ taskId, start: row.start, end: row.end, openedAt: Date.now() });
+  };
+  const checkIns = useMemo(() => pendingCheckIns(tasks, planner.nowMs), [tasks, planner.nowMs]);
 
   // Recurring events repeated across a window around the date on screen.
   const displayEvents = useMemo(() => {
@@ -47,9 +58,10 @@ export default function CalendarPage() {
     return expandEvents(events, wStart, wEnd);
   }, [events, currentDate]);
 
-  // Clicking a block edits the event, or the task it came from.
+  // Clicking a block edits the event, opens the work session, or edits the task it came from.
   const openDetail = (ev: CalendarEvent) => {
     if (!isTaskEventId(ev.id)) return modal.openEvent(ev);
+    if (ev.isTaskSession && ev.sessionIndex !== undefined) return showSession(taskIdFromCalendarId(ev.id), ev.sessionIndex);
     const task = tasks.find(t => String(t.id) === taskIdFromCalendarId(ev.id));
     if (task) modal.openTask(task);
   };
@@ -137,6 +149,10 @@ export default function CalendarPage() {
           createdMessage={taskActions.createdMessage}
           completingTaskId={taskActions.completingTaskId}
           showUndo={taskActions.hasUndo}
+          atRisk={planner.atRisk}
+          checkIns={checkIns}
+          onCheckIn={planner.updateTaskSession}
+          onOpenSession={showSession}
           onNewTask={() => modal.openNew('task', toDateKey(currentDate))}
           onPlanWeek={() => planner.planWeek()}
           onOpenWorkPlan={() => planner.setShowWorkPlan(true)}
@@ -182,6 +198,18 @@ export default function CalendarPage() {
           onDeleteTask={() => { taskActions.deleteTask(modal.editingTaskId!); modal.close(); }}
           onSaveEvent={saveEvent}
           onDeleteEvent={() => submit(() => eventActions.deleteEvent(modal.editingEventId!))}
+        />
+      )}
+
+      {openSession && sessionTask && session && (
+        <SessionModal
+          title={sessionTask.title}
+          session={session}
+          nowMs={openSession.openedAt}
+          accentColor={accentColor}
+          onChange={change => planner.updateTaskSession(String(sessionTask.id), session, change)}
+          onEditTask={() => modal.openTask(sessionTask)}
+          onClose={() => setOpenSession(null)}
         />
       )}
 

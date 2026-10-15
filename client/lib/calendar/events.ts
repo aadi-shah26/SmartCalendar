@@ -60,6 +60,9 @@ export function computeTaskCalendarEvents(t: Task): CalendarEvent[] {
       description: 'Work session',
       color: t.color,
       isTaskSession: true,
+      sessionIndex: i,
+      sessionStatus: sess.status,
+      sessionPinned: !!sess.pinned,
     });
   });
   return out;

@@ -3,7 +3,7 @@ import { getTextColor } from '../../lib/calendar/colors';
 import { DAYS, formatEventTime, formatEventTimeRange, monthCells, toDateKey } from '../../lib/calendar/dates';
 import { byStartTime, isTaskEventId } from '../../lib/calendar/events';
 import type { CalendarEvent } from '../../lib/calendar/types';
-import { SESSION_STRIPES } from './styles';
+import { SESSION_STRIPES, sessionStatusStyle } from './styles';
 
 const MAX_CHIPS = 3;
 
@@ -48,7 +48,7 @@ export default function MonthView({ currentDate, events, openAdd, openDetail, ac
                     style={{ backgroundColor: bg, color: fg, borderRadius: 4, padding: '1px 5px', fontSize: 11, fontWeight: 600, marginBottom: 2,
                       overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis',
                       border: isSched ? `1px dashed ${fg}` : 'none',
-                      ...(ev.isTaskSession ? SESSION_STRIPES : {}),
+                      ...(ev.isTaskSession ? { ...SESSION_STRIPES, ...sessionStatusStyle(ev.sessionStatus) } : {}),
                     }}>
                     {isSched && <ListChecks style={{ display: 'inline-block', width: 9, height: 9, verticalAlign: -1, marginRight: 2 }} />}
                     <span style={{ opacity: 0.8, fontWeight: 500 }}>{ev.isTaskDue ? `Due ${formatEventTime(ev.start_time)}` : formatEventTimeRange(ev.start_time, ev.end_time)}</span>{' '}{ev.title}

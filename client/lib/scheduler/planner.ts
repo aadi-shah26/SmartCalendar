@@ -66,7 +66,9 @@ export interface PlanResult {
 
 export const PLANNING_HORIZON_DAYS = 14;
 const STEP_MIN = 15;
-const MIN = 60_000;
+export const MIN = 60_000;
+/** Beyond this distance from its old start, a moved session's distance stops mattering. */
+const ANCHOR_CAP_HOURS = 48;
 const PRIORITY_RANK: Record<PlannerPriority, number> = { Low: 0, Medium: 1, High: 2, Critical: 3 };
 
 export function prefsForWorkTime(
@@ -111,24 +113,24 @@ export function splitIntoPieces(task: PlannerTask, sessionMin?: number): number[
   return pieces;
 }
 
-function ceilToStep(ms: number): number {
+export function ceilToStep(ms: number): number {
   const step = STEP_MIN * MIN;
   return Math.ceil(ms / step) * step;
 }
 
-function localDayStart(ms: number): number {
+export function localDayStart(ms: number): number {
   const d = new Date(ms);
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
 
-function addLocalDays(dayStartMs: number, days: number): number {
+export function addLocalDays(dayStartMs: number, days: number): number {
   const d = new Date(dayStartMs);
   d.setDate(d.getDate() + days);
   return d.getTime();
 }
 
-function dailyWindows(fromMs: number, toMs: number, startMin: number, endMin: number, workDays?: number[]): IntervalSet {
+export function dailyWindows(fromMs: number, toMs: number, startMin: number, endMin: number, workDays?: number[]): IntervalSet {
   const out: Interval[] = [];
   for (let day = localDayStart(fromMs); day < toMs; day = addLocalDays(day, 1)) {
     if (workDays && !workDays.includes(new Date(day).getDay())) continue;
@@ -143,7 +145,8 @@ function overlapMs(a: Interval, set: IntervalSet): number {
   return new IntervalSet([a]).intersect(set).totalDurationMs();
 }
 
-function byUrgency(a: PlannerTask, b: PlannerTask): number {
+/** Most urgent first: earliest deadline, then highest priority, then longest. Total order. */
+export function byUrgency(a: PlannerTask, b: PlannerTask): number {
   return (a.deadlineMs ?? Infinity) - (b.deadlineMs ?? Infinity)
     || PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]
     || b.durationMinutes - a.durationMinutes
@@ -151,9 +154,9 @@ function byUrgency(a: PlannerTask, b: PlannerTask): number {
 }
 
 /** Minutes of task work already planned on each local day. */
-type DayLoad = Map<number, number>;
+export type DayLoad = Map<number, number>;
 
-function addLoad(load: DayLoad, s: Interval) {
+export function addLoad(load: DayLoad, s: Interval) {
   const day = localDayStart(s.startMs);
   load.set(day, (load.get(day) ?? 0) + (s.endMs - s.startMs) / MIN);
 }
@@ -164,7 +167,7 @@ function loadOf(sessions: Interval[]): DayLoad {
   return load;
 }
 
-interface SlotQuery {
+export interface SlotQuery {
   free: IntervalSet;
   peak: IntervalSet;
   lenMs: number;
@@ -182,6 +185,8 @@ interface SlotQuery {
   capMin: number;
   /** Unset keeps the original behaviour: earliest first, mild preference for separate days. */
   spread?: 'steady' | 'asap';
+  /** Where a session being moved used to start. Set, staying close to it beats being early. */
+  anchorMs?: number;
 }
 
 /** Score lost per session of the same task already on that day. */
@@ -190,7 +195,7 @@ function siblingPenaltyFor(spread: SlotQuery['spread']): number {
 }
 
 /** The best free slot for one session, or null if none fits. */
-function bestSlot(q: SlotQuery): Interval | null {
+export function bestSlot(q: SlotQuery): Interval | null {
   if (q.earliestMs >= q.latestEndMs) return null;
   const feasible = q.free.intersect(new IntervalSet([{ startMs: q.earliestMs, endMs: q.latestEndMs }])).toList();
   const span = Math.max(q.latestEndMs - q.originMs, 1);
@@ -216,7 +221,10 @@ function bestSlot(q: SlotQuery): Interval | null {
       const slot = { startMs: s, endMs: s + q.lenMs };
       // Earlier is better: finish well ahead of the deadline rather than at it. In steady mode
       // this matters less than keeping each day's load even.
-      let score = (1 - (s - q.originMs) / span) * (steady ? 25 : 100);
+      let score = q.anchorMs !== undefined
+        // A moved session should land near where the user expected it, not just anywhere earlier.
+        ? -Math.min(Math.abs(s - q.anchorMs) / (60 * MIN), ANCHOR_CAP_HOURS) * 2
+        : (1 - (s - q.originMs) / span) * (steady ? 25 : 100);
       const peakShare = overlapMs(slot, q.peak) / q.lenMs;
       if (q.energy === 'High') score += peakShare * 30;
       if (q.energy === 'Low') score += (1 - peakShare) * 15;
@@ -322,110 +330,4 @@ export function planSessions(
 
   sessions.sort((a, b) => a.startMs - b.startMs);
   return { sessions, unplaced, overLimit };
-}
-
-// ── Conflict resolution ──────────────────────────────────────────────────────
-
-export interface ScheduledTask extends PlannerTask {
-  sessions: Interval[];
-}
-
-export interface SessionMove {
-  taskId: string;
-  from: Interval;
-  /** null when no free slot was left before the deadline; the session was dropped. */
-  to: Interval | null;
-}
-
-export interface ConflictResolution {
-  /** New full session list for every task that changed. */
-  changed: Record<string, Interval[]>;
-  moves: SessionMove[];
-}
-
-function overlapsAny(s: Interval, set: IntervalSet): boolean {
-  return overlapMs(s, set) > 0;
-}
-
-/**
- * Splits every task's sessions into ones that can stay and ones that clash with fixed busy
- * time (events, fixed-time tasks) or with a more urgent task's session. Sessions that have
- * already ended are never touched.
- */
-function classifySessions(tasks: ScheduledTask[], busy: IntervalSet, nowMs: number) {
-  const kept = new Map<string, Interval[]>();
-  const conflicting = new Map<string, Interval[]>();
-  let claimed = IntervalSet.empty();
-  for (const task of [...tasks].sort(byUrgency)) {
-    const keep: Interval[] = [];
-    const clash: Interval[] = [];
-    for (const s of [...task.sessions].filter(s => s.endMs > s.startMs).sort((a, b) => a.startMs - b.startMs)) {
-      if (s.endMs <= nowMs) keep.push(s);
-      else if (overlapsAny(s, busy) || overlapsAny(s, claimed)) clash.push(s);
-      else {
-        keep.push(s);
-        claimed = claimed.union(new IntervalSet([s]));
-      }
-    }
-    kept.set(task.id, keep);
-    if (clash.length) conflicting.set(task.id, clash);
-  }
-  return { kept, conflicting };
-}
-
-export function hasConflicts(tasks: ScheduledTask[], busy: Interval[], nowMs: number): boolean {
-  const busySet = new IntervalSet(busy.filter(b => b.endMs > b.startMs));
-  return classifySessions(tasks, busySet, nowMs).conflicting.size > 0;
-}
-
-/**
- * Moves only the sessions that clash, leaving every other session where it is.
- * @param busy  fixed busy time only: events and fixed-time tasks (not sessions)
- */
-export function resolveConflicts(
-  tasks: ScheduledTask[],
-  busy: Interval[],
-  prefs: PlannerPrefs,
-  nowMs: number,
-  horizonDays = PLANNING_HORIZON_DAYS,
-): ConflictResolution {
-  const busySet = new IntervalSet(busy.filter(b => b.endMs > b.startMs));
-  const { kept, conflicting } = classifySessions(tasks, busySet, nowMs);
-  const result: ConflictResolution = { changed: {}, moves: [] };
-  if (conflicting.size === 0) return result;
-
-  const startMs = ceilToStep(nowMs);
-  const horizonEndMs = addLocalDays(localDayStart(nowMs), horizonDays + 1);
-  const bufMs = prefs.bufferMin * MIN;
-  const keptFuture = [...kept.values()].flat().filter(s => s.endMs > nowMs)
-    .map(s => ({ startMs: s.startMs - bufMs, endMs: s.endMs + bufMs }));
-  let free = dailyWindows(startMs, horizonEndMs, prefs.dayStartMin, prefs.dayEndMin, prefs.workDays)
-    .subtract(busySet)
-    .subtract(new IntervalSet(keptFuture));
-  const peak = dailyWindows(startMs, horizonEndMs, prefs.peakStartMin, prefs.peakEndMin);
-  const capMin = prefs.maxDailyMin && prefs.maxDailyMin > 0 ? prefs.maxDailyMin : Infinity;
-  const dayLoad = loadOf([...kept.values()].flat());
-
-  for (const task of [...tasks].sort(byUrgency)) {
-    const clashes = conflicting.get(task.id);
-    if (!clashes) continue;
-    const sessions = [...(kept.get(task.id) ?? [])];
-    for (const from of clashes) {
-      const query = {
-        free, peak, lenMs: from.endMs - from.startMs, earliestMs: startMs,
-        latestEndMs: Math.min(task.deadlineMs ?? horizonEndMs, horizonEndMs),
-        originMs: startMs, energy: task.energyLevel, siblings: sessions, deadlineMs: task.deadlineMs,
-        dayLoad, capMin, spread: prefs.spread,
-      };
-      const to = bestSlot(query) ?? (Number.isFinite(capMin) ? bestSlot({ ...query, capMin: Infinity }) : null);
-      result.moves.push({ taskId: task.id, from, to });
-      if (to) {
-        sessions.push(to);
-        addLoad(dayLoad, to);
-        free = free.subtract(new IntervalSet([{ startMs: to.startMs - bufMs, endMs: to.endMs + bufMs }]));
-      }
-    }
-    result.changed[task.id] = sessions.sort((a, b) => a.startMs - b.startMs);
-  }
-  return result;
 }
