@@ -1,4 +1,5 @@
 // Shapes shared by the calendar page, its components and hooks.
+import type { SessionStatus } from '../scheduler';
 
 export type ViewMode = 'Day' | 'Week' | 'Month' | 'Year';
 
@@ -22,16 +23,28 @@ export interface CalendarEvent {
   _recurringBaseId?: string;
   isTaskDue?: boolean;
   isTaskSession?: boolean;
+  /** For a work session: its index in the task's sessions, and what became of it. */
+  sessionIndex?: number;
+  sessionStatus?: SessionStatus;
+  sessionPinned?: boolean;
   taskDurationMin?: number;
 }
 
 export type TaskPriority = 'Low' | 'Medium' | 'High' | 'Critical';
 export type EnergyLevel = 'Low' | 'Medium' | 'High';
 
-/** A planned work session, as stored on the task row (ISO timestamps). */
+/**
+ * A planned work session, as stored on the task row (ISO timestamps). Sessions saved before
+ * check-ins existed have only start and end.
+ */
 export interface TaskSession {
   start: string;
   end: string;
+  status?: SessionStatus;
+  /** For 'partial': minutes of it that got done. */
+  doneMinutes?: number;
+  /** Placed by the user: replanning never moves it. */
+  pinned?: boolean;
 }
 
 /** A row of the `tasks` table. */

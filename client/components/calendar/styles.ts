@@ -33,3 +33,11 @@ export const twoColumns: CSSProperties = { display: 'grid', gridTemplateColumns:
 export const SESSION_STRIPES: CSSProperties = {
   backgroundImage: 'repeating-linear-gradient(135deg, rgba(255,255,255,0.45) 0 6px, transparent 6px 12px)',
 };
+
+/** How a work session looks once someone has said how it went. */
+export function sessionStatusStyle(status?: string): CSSProperties {
+  if (status === 'done') return { opacity: 0.55 };
+  if (status === 'partial') return { opacity: 0.7 };
+  if (status === 'skipped') return { opacity: 0.4, textDecoration: 'line-through' };
+  return {};
+}

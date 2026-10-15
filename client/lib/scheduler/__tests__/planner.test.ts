@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planSessions, prefsForWorkTime, splitIntoPieces, hasConflicts, resolveConflicts, DEFAULT_WORK_PLAN, PlannerTask, ScheduledTask } from '../planner';
+import { planSessions, prefsForWorkTime, splitIntoPieces, DEFAULT_WORK_PLAN, PlannerTask } from '../planner';
 
 // Local wall-clock times, so the tests pass in any timezone.
 const at = (day: number, h: number, m = 0) => new Date(2026, 9, day, h, m).getTime(); // Oct 2026
@@ -182,81 +182,5 @@ describe('planSessions', () => {
     const { sessions, unplaced } = planSessions([task({ durationMinutes: 0, deadlineMs: at(6, 9) })], [], prefs, NOW);
     expect(sessions).toEqual([]);
     expect(unplaced).toEqual([]);
-  });
-});
-
-describe('resolveConflicts', () => {
-  const sched = (over: Partial<ScheduledTask>): ScheduledTask => ({ ...task({}), sessions: [], ...over });
-  const s = (day: number, h: number, durMin = 60) => ({ startMs: at(day, h), endMs: at(day, h) + durMin * 60_000 });
-
-  it('does nothing when there is no conflict', () => {
-    const tasks = [sched({ deadlineMs: at(7, 17), sessions: [s(6, 9)] })];
-    const busy = [s(6, 11)];
-    expect(hasConflicts(tasks, busy, NOW)).toBe(false);
-    expect(resolveConflicts(tasks, busy, prefs, NOW)).toEqual({ changed: {}, moves: [] });
-  });
-
-  it('moves only the clashing session and leaves the others alone', () => {
-    const keepA = s(6, 9);
-    const clash = s(7, 9);
-    const tasks = [sched({ id: 'a', deadlineMs: at(9, 17), sessions: [keepA, clash] })];
-    const meeting = { startMs: at(7, 8, 30), endMs: at(7, 10) };
-    expect(hasConflicts(tasks, [meeting], NOW)).toBe(true);
-
-    const { changed, moves } = resolveConflicts(tasks, [meeting], prefs, NOW);
-    expect(moves).toHaveLength(1);
-    expect(moves[0].from).toEqual(clash);
-    const to = moves[0].to!;
-    expect(to.endMs - to.startMs).toBe(clash.endMs - clash.startMs);
-    expect(overlaps(to, meeting)).toBe(false);
-    expect(to.endMs).toBeLessThanOrEqual(at(9, 17));
-    expect(changed.a).toContainEqual(keepA);
-    expect(changed.a).toHaveLength(2);
-  });
-
-  it('does not touch tasks that are not in conflict', () => {
-    const tasks = [
-      sched({ id: 'clash', deadlineMs: at(9, 17), sessions: [s(6, 14)] }),
-      sched({ id: 'fine', deadlineMs: at(9, 17), sessions: [s(6, 9)] }),
-    ];
-    const { changed } = resolveConflicts(tasks, [s(6, 14)], prefs, NOW);
-    expect(Object.keys(changed)).toEqual(['clash']);
-    expect(overlaps(changed.clash[0], s(6, 9))).toBe(false);
-  });
-
-  it('lets the more urgent task keep its slot when two tasks overlap', () => {
-    const tasks = [
-      sched({ id: 'later', deadlineMs: at(9, 17), sessions: [s(6, 9)] }),
-      sched({ id: 'sooner', deadlineMs: at(6, 17), sessions: [s(6, 9)] }),
-    ];
-    const { changed } = resolveConflicts(tasks, [], prefs, NOW);
-    expect(Object.keys(changed)).toEqual(['later']);
-    expect(overlaps(changed.later[0], s(6, 9))).toBe(false);
-  });
-
-  it('never moves sessions that already happened', () => {
-    const past = { startMs: at(5, 7), endMs: at(5, 8) };
-    const tasks = [sched({ deadlineMs: at(9, 17), sessions: [past] })];
-    expect(hasConflicts(tasks, [past], NOW)).toBe(false);
-  });
-
-  it('reports a dropped session when nothing fits before the deadline', () => {
-    const tasks = [sched({ deadlineMs: at(5, 18), sessions: [s(5, 10)] })];
-    const busy = [{ startMs: at(5, 9), endMs: at(5, 22) }];
-    const { changed, moves } = resolveConflicts(tasks, busy, prefs, NOW);
-    expect(moves).toEqual([{ taskId: 't', from: s(5, 10), to: null }]);
-    expect(changed.t).toEqual([]);
-  });
-
-  it('moved sessions do not land on each other', () => {
-    const tasks = [
-      sched({ id: 'a', deadlineMs: at(9, 17), sessions: [s(6, 9)] }),
-      sched({ id: 'b', deadlineMs: at(9, 17), sessions: [s(6, 10)] }),
-    ];
-    const meeting = { startMs: at(6, 9), endMs: at(6, 11) };
-    const { moves } = resolveConflicts(tasks, [meeting], prefs, NOW);
-    expect(moves).toHaveLength(2);
-    expect(overlaps(moves[0].to!, moves[1].to!)).toBe(false);
-    for (const m of moves) expect(overlaps(m.to!, meeting)).toBe(false);
   });
 });

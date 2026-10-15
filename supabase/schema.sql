@@ -103,7 +103,11 @@ alter table google_connections enable row level security;
 
 
 -- ---------------------------------------------------------------------------
--- Smart scheduling: planned work sessions for a task, as [{ "start": iso, "end": iso }, ...]
+-- Smart scheduling: planned work sessions for a task, as
+-- [{ "start": iso, "end": iso, "status"?: "planned" | "done" | "partial" | "skipped",
+--    "doneMinutes"?: number, "pinned"?: true }, ...]
+-- status/doneMinutes/pinned need no migration (it's jsonb). Sessions without a status are from
+-- before check-ins and count as done once they've ended.
 -- ---------------------------------------------------------------------------
 alter table tasks add column if not exists sessions jsonb not null default '[]'::jsonb;
 
