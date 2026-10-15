@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  formatDuration, formatEventTime, formatEventTimeRange, formatHour, getWeekStart, joinDateTime,
-  monthCells, periodLabel, splitDateTime, stepDate, toDateKey, toLocalISO,
+  formatDuration, formatDurationLabel, formatEventTime, formatEventTimeRange, formatHour, getWeekStart, joinDateTime,
+  minutesOfDay, monthCells, parseTimeInput, periodLabel, splitDateTime, stepDate, timeOfDay, toDateKey, toLocalISO,
 } from '../dates';
 
 describe('date keys', () => {
@@ -56,5 +56,25 @@ describe('navigation', () => {
     const cells = monthCells(2026, 9); // Oct 2026 starts on a Thursday
     expect(cells.slice(0, 5)).toEqual([null, null, null, null, 1]);
     expect(cells[cells.length - 1]).toBe(31);
+  });
+});
+
+describe('time entry', () => {
+  it('parses typed times', () => {
+    const cases: [string, string | null][] = [
+      ['3pm', '15:00'], ['3:30 PM', '15:30'], ['330p', '15:30'], ['12am', '00:00'], ['12pm', '12:00'],
+      ['12:15 a.m.', '00:15'], ['9', '09:00'], ['15:30', '15:30'], ['1530', '15:30'], ['0', '00:00'],
+      ['13pm', null], ['0am', null], ['24', null], ['9:75', null], ['soon', null], ['', null],
+    ];
+    for (const [input, expected] of cases) expect([input, parseTimeInput(input)]).toEqual([input, expected]);
+  });
+  it('labels durations like Google Calendar', () => {
+    expect([15, 45, 60, 75, 90, 120].map(formatDurationLabel)).toEqual(['15 mins', '45 mins', '1 hr', '1.25 hrs', '1.5 hrs', '2 hrs']);
+  });
+  it('converts between times and minutes, clamping to the day', () => {
+    expect(minutesOfDay('09:30')).toBe(570);
+    expect(minutesOfDay('09:30:00')).toBe(570);
+    expect(timeOfDay(570)).toBe('09:30');
+    expect(timeOfDay(25 * 60)).toBe('23:59');
   });
 });

@@ -1,7 +1,7 @@
 'use client';
 import type { CSSProperties } from 'react';
 import { getTextColor } from '../../lib/calendar/colors';
-import type { EventForm, ItemTab, TaskForm } from '../../lib/calendar/forms';
+import { shiftEndWithStart, type EventForm, type ItemTab, type TaskForm } from '../../lib/calendar/forms';
 import type { EnergyLevel, RecurrenceType, TaskPriority } from '../../lib/calendar/types';
 import ColorPicker from './ColorPicker';
 import DateTimeField from './DateTimeField';
@@ -121,11 +121,11 @@ function EventFields({ form, onChange, accentColor }: {
       <div style={twoColumns}>
         <div>
           <label style={labelStyle}>Start Time</label>
-          <TimePicker value={form.start} onChange={start => onChange({ start })} />
+          <TimePicker value={form.start} onChange={start => onChange({ start, end: shiftEndWithStart(form.start, form.end, start) })} />
         </div>
         <div>
           <label style={labelStyle}>End Time</label>
-          <TimePicker value={form.end} onChange={end => onChange({ end })} />
+          <TimePicker value={form.end} onChange={end => onChange({ end })} after={form.start} />
         </div>
       </div>
       <label style={labelStyle}>Description</label>

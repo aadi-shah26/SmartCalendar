@@ -130,3 +130,43 @@ export function periodLabel(date: Date, view: ViewMode): string {
   if (view === 'Month') return `${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
   return `${date.getFullYear()}`;
 }
+
+/** "HH:MM[:SS]" → minutes since midnight. */
+export function minutesOfDay(time: string): number {
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+/** Minutes since midnight → "HH:MM" (clamped to 00:00–23:59). */
+export function timeOfDay(minutes: number): string {
+  const m = Math.max(0, Math.min(minutes, 23 * 60 + 59));
+  return `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`;
+}
+
+/** Google Calendar style duration for the end-time list: "30 mins", "1 hr", "1.5 hrs". */
+export function formatDurationLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes} mins`;
+  const hours = Math.round((minutes / 60) * 100) / 100;
+  return `${hours} ${hours === 1 ? 'hr' : 'hrs'}`;
+}
+
+/**
+ * A typed time → "HH:MM", or null if it isn't one. Accepts "3pm", "3:30 PM", "330p", "9",
+ * "15:30" and "1530"; without am/pm the hour is read as 24-hour.
+ */
+export function parseTimeInput(text: string): string | null {
+  const match = text.trim().toLowerCase().replace(/[\s.]/g, '').match(/^(\d{1,2})(?::?(\d{2}))?(a|am|p|pm)?$/);
+  if (!match) return null;
+  let h = Number(match[1]);
+  const m = Number(match[2] ?? 0);
+  const period = match[3]?.[0];
+  if (m > 59) return null;
+  if (period) {
+    if (h < 1 || h > 12) return null;
+    if (period === 'p' && h !== 12) h += 12;
+    if (period === 'a' && h === 12) h = 0;
+  } else if (h > 23) {
+    return null;
+  }
+  return timeOfDay(h * 60 + m);
+}
