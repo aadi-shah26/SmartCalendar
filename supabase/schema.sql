@@ -116,3 +116,11 @@ alter table tasks add column if not exists sessions jsonb not null default '[]':
 -- { "dailyMinutes": 180, "sessionMinutes": 60, "workDays": [0..6], "spread": "steady" | "asap" }
 -- ---------------------------------------------------------------------------
 alter table profiles add column if not exists planning_prefs jsonb;
+
+-- ---------------------------------------------------------------------------
+-- Smart scheduling: learning from history. A task's first estimate, and the time actually
+-- worked on it (recorded when it's completed), so planning can allow for tasks that
+-- usually take longer (or shorter) than estimated.
+-- ---------------------------------------------------------------------------
+alter table tasks add column if not exists estimated_minutes integer;
+alter table tasks add column if not exists actual_minutes integer;

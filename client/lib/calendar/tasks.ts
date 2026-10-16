@@ -1,4 +1,5 @@
 import { isUpcoming, PLANNING_HORIZON_DAYS, type PlannerTask, type SessionStatus, type TrackedSession, type TrackedTask } from '../scheduler';
+import { scaledMinutes } from './estimates';
 import { expandEvents, isTaskEventId } from './events';
 import type { CalendarEvent, Task, TaskRow, TaskSession } from './types';
 
@@ -24,6 +25,8 @@ export function taskFromRow(row: TaskRow): Task {
     isDeleted: false,
     createdAt: row.created_at,
     sessions: Array.isArray(row.sessions) ? row.sessions : [],
+    estimatedMinutes: row.estimated_minutes ?? null,
+    actualMinutes: row.actual_minutes ?? null,
   };
 }
 
@@ -41,10 +44,11 @@ export function isPlannable(t: Task): boolean {
   return isActiveTask(t) && !t.isFixedTime && taskMinutes(t) > 0;
 }
 
-export function toPlannerTask(t: Task): PlannerTask {
+/** `ratio` scales the estimate, to allow for tasks usually taking longer (or shorter) than estimated. */
+export function toPlannerTask(t: Task, ratio = 1): PlannerTask {
   return {
     id: String(t.id),
-    durationMinutes: taskMinutes(t),
+    durationMinutes: scaledMinutes(taskMinutes(t), ratio),
     deadlineMs: t.deadline ? new Date(t.deadline).getTime() : null,
     priority: t.priority ?? 'Medium',
     energyLevel: t.energyLevel ?? 'Medium',
@@ -77,8 +81,8 @@ export function sessionToRow(s: TrackedSession): TaskSession {
   };
 }
 
-export function toTrackedTask(t: Task): TrackedTask {
-  return { ...toPlannerTask(t), sessions: (t.sessions ?? []).map(sessionFromRow) };
+export function toTrackedTask(t: Task, ratio = 1): TrackedTask {
+  return { ...toPlannerTask(t, ratio), sessions: (t.sessions ?? []).map(sessionFromRow) };
 }
 
 /** A task's sessions with every upcoming one dropped except pinned and under-way ones. */

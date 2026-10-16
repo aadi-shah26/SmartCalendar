@@ -2,10 +2,30 @@
 import { useState, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import { taskRowFromForm, type TaskForm } from '../../../lib/calendar/forms';
+import { workedMinutes } from '../../../lib/calendar/estimates';
 import { isPlannable, schedulingKey, taskFromRow } from '../../../lib/calendar/tasks';
 import type { Task } from '../../../lib/calendar/types';
 
 const UNDO_WINDOW_MS = 5000;
+
+type Learning = { estimated_minutes?: number; actual_minutes?: number };
+
+/**
+ * Writes `row` plus the learning columns, or just `row` on a database that doesn't have those
+ * columns yet (supabase/schema.sql adds them), so saving never fails because of them.
+ */
+async function withLearning<T extends { error: { message: string } | null }>(
+  learning: Learning, write: (extra: Learning) => PromiseLike<T>,
+): Promise<T> {
+  if (Object.keys(learning).length === 0) return write({});
+  const result = await write(learning);
+  if (result.error && /estimated_minutes|actual_minutes/.test(result.error.message)) return write({});
+  return result;
+}
+
+/** A plannable task's duration, as its first estimate. */
+const estimateOf = (row: { is_fixed_time: boolean; duration_minutes: number }): Learning =>
+  !row.is_fixed_time && row.duration_minutes > 0 ? { estimated_minutes: row.duration_minutes } : {};
 
 /** Creating, editing, completing and deleting (with undo) tasks. */
 export function useTaskActions({ tasks, setTasks, userId, replanTask }: {
@@ -41,8 +61,12 @@ export function useTaskActions({ tasks, setTasks, userId, replanTask }: {
     setTimeout(async () => {
       setCompletingTaskId(null);
       // setTasks alone is enough — the sync effect removes its calendar block automatically.
-      setTasks(prev => prev.map(item => item.id === id ? { ...item, isCompleted: true } : item));
-      await supabase.from('tasks').update({ is_completed: true }).eq('id', id);
+      const task = tasks.find(item => item.id === id);
+      // How long it really took, to compare with its estimate.
+      const learning: Learning = task?.estimatedMinutes ? { actual_minutes: workedMinutes(task.sessions, Date.now()) } : {};
+      setTasks(prev => prev.map(item => item.id === id
+        ? { ...item, isCompleted: true, actualMinutes: learning.actual_minutes ?? item.actualMinutes } : item));
+      await withLearning(learning, extra => supabase.from('tasks').update({ is_completed: true, ...extra }).eq('id', id));
     }, 500);
   }
 
@@ -56,10 +80,12 @@ export function useTaskActions({ tasks, setTasks, userId, replanTask }: {
     if (!userId) return 'Not signed in.';
     const row = taskRowFromForm(form);
     if (editingId) {
-      const { data, error } = await supabase.from('tasks').update(row).eq('id', editingId).select();
+      const before = tasks.find(item => item.id === editingId);
+      // A task that only now gets a duration: that's its first estimate.
+      const learning = before?.estimatedMinutes ? {} : estimateOf(row);
+      const { data, error } = await withLearning(learning, extra => supabase.from('tasks').update({ ...row, ...extra }).eq('id', editingId).select());
       if (error || !data) return error?.message ?? 'Failed to update task.';
       const updated = taskFromRow(data[0]);
-      const before = tasks.find(item => item.id === editingId);
       const nextTasks = tasks.map(item => item.id === editingId ? updated : item);
       setTasks(nextTasks);
       onSaved();
@@ -70,7 +96,8 @@ export function useTaskActions({ tasks, setTasks, userId, replanTask }: {
     // stale (e.g. session changed in another tab) and get rejected by row-level security.
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return 'Not signed in.';
-    const { data, error } = await supabase.from('tasks').insert([{ ...row, user_id: session.user.id }]).select();
+    const { data, error } = await withLearning(estimateOf(row),
+      extra => supabase.from('tasks').insert([{ ...row, ...extra, user_id: session.user.id }]).select());
     if (error || !data) return error?.message ?? 'Failed to save task.';
     const newTask = taskFromRow(data[0]);
     const nextTasks = [newTask, ...tasks];

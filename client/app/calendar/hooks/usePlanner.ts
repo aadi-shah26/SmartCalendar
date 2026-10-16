@@ -9,6 +9,7 @@ import {
   fixedBusyIntervals, isActiveTask, isPlannable, sessionToRow, toTrackedTask, updateSession, withoutMovableSessions,
   type CheckIn,
 } from '../../../lib/calendar/tasks';
+import { estimateHistory } from '../../../lib/calendar/estimates';
 import { describeChanges } from '../../../lib/calendar/replanMessages';
 import type { CalendarEvent, Profile, StatusMessage, Task, TaskSession } from '../../../lib/calendar/types';
 import { workPlanKey } from '../../../lib/calendar/workPlan';
@@ -58,6 +59,14 @@ export function usePlanner({ events, tasks, setTasks, profile, userId, workPlan,
   /** The latest tasks, including updates React hasn't rendered yet. */
   const readLatestTasks = () => new Promise<Task[]>(resolve => setTasks(prev => { resolve(prev); return prev; }));
 
+  /** How long finished tasks really took compared to their estimates. */
+  const history = useMemo(() => estimateHistory(tasks), [tasks]);
+  /** The ratio estimates are scaled by: 1 unless the user chose to plan with their history. */
+  const ratioFor = (plan: WorkPlanSettings | null) => (plan?.adjustForHistory && history ? history.ratio : 1);
+  const ratio = ratioFor(workPlan);
+  const trackedTasks = (taskList: Task[], plan: WorkPlanSettings | null = workPlan) =>
+    taskList.filter(isPlannable).map(t => toTrackedTask(t, ratioFor(plan)));
+
   const plannerPrefs = (plan: WorkPlanSettings | null = workPlan) =>
     prefsForWorkTime(profile?.work_time, profile?.work_style, plan ?? DEFAULT_WORK_PLAN);
 
@@ -92,7 +101,7 @@ export function usePlanner({ events, tasks, setTasks, profile, userId, workPlan,
   /** Reflows every plannable task in `taskList` and saves what changed. */
   async function reflowAndSave(taskList: Task[], extraWrites = new Map<string, TaskSession[]>()) {
     const now = Date.now();
-    const result = reflow(taskList.filter(isPlannable).map(toTrackedTask), fixedBusyIntervals(events, taskList, now), plannerPrefs(), now);
+    const result = reflow(trackedTasks(taskList), fixedBusyIntervals(events, taskList, now), plannerPrefs(), now);
     const writes = new Map([...extraWrites, ...asRows(result.changed)]);
     const saveError = await saveSessions(writes);
     return { ...result, saveError };
@@ -105,7 +114,7 @@ export function usePlanner({ events, tasks, setTasks, profile, userId, workPlan,
     // Wait for the profile: it decides working hours.
     if (!profile || reflowQueued.current) return;
     const now = Date.now();
-    const plannable = tasks.filter(isPlannable).map(toTrackedTask);
+    const plannable = trackedTasks(tasks);
     if (plannable.length === 0) return;
     if (Object.keys(reflow(plannable, fixedBusyIntervals(events, tasks, now), plannerPrefs(), now).changed).length === 0) return;
 
@@ -127,14 +136,15 @@ export function usePlanner({ events, tasks, setTasks, profile, userId, workPlan,
       const text = describeChanges(result.changes, result.atRisk, titleLookup(latest));
       if (text) showMessage({ text: `Plan updated. ${text}`, error: false });
     });
-    // Only a change to events, tasks, the clock or the profile can need a replan; the helpers read the latest render.
+    // Only a change to events, tasks, the clock, the profile or the estimate ratio can need a replan; the helpers read the latest render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, tasks, nowMs, profile]);
+  }, [events, tasks, nowMs, profile, ratio]);
 
   /** Work that no longer fits anywhere before its deadline. Shown until it's dealt with. */
   const atRisk = useMemo(
-    () => atRiskTasks(tasks.filter(isPlannable).map(toTrackedTask), nowMs),
-    [tasks, nowMs],
+    () => atRiskTasks(trackedTasks(tasks), nowMs),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tasks, nowMs, ratio],
   );
 
   /** Shows what a plan did: tasks that didn't fit, or went over the daily limit, or `label`. */
@@ -183,7 +193,7 @@ export function usePlanner({ events, tasks, setTasks, profile, userId, workPlan,
     await serially(async () => {
       const latest = await readLatestTasks();
       const now = Date.now();
-      const targets = latest.filter(isPlannable).map(toTrackedTask);
+      const targets = trackedTasks(latest, plan);
       const bases = new Map(targets.map(t => [t.id, replanBasis(t, now)]));
       const kept = [...bases.values()].flatMap(b => b.keep);
       // Kept upcoming sessions and time the user can't make are off limits; worked time counts toward each day's limit.
@@ -219,8 +229,33 @@ export function usePlanner({ events, tasks, setTasks, profile, userId, workPlan,
     });
   }
 
+  /**
+   * Moves a session to where the user dropped it and pins it there. The watcher then moves the
+   * rest of the plan around it.
+   */
+  async function moveTaskSession(taskId: string, session: TaskSession, startMs: number, endMs: number) {
+    if (startMs < Date.now()) {
+      showMessage({ text: "Work sessions can't be moved into the past.", error: true }, 4000);
+      return;
+    }
+    await serially(async () => {
+      const task = (await readLatestTasks()).find(t => String(t.id) === taskId);
+      const index = task?.sessions?.findIndex(s => s.start === session.start && s.end === session.end) ?? -1;
+      if (!task || !isActiveTask(task) || index < 0) return;
+      const moved: TaskSession = {
+        ...task.sessions[index], start: new Date(startMs).toISOString(), end: new Date(endMs).toISOString(), status: 'planned', pinned: true,
+      };
+      const sessions = task.sessions.map((s, i) => (i === index ? moved : s))
+        .sort((a, b) => Date.parse(a.start) - Date.parse(b.start));
+      const saveError = await saveSessions(new Map([[taskId, sessions]]));
+      showMessage(saveError
+        ? { text: `Couldn't move that session: ${saveError}`, error: true }
+        : { text: `Moved "${task.title}" and pinned it there. The rest of your plan works around it.`, error: false }, 5000);
+    });
+  }
+
   return {
     planning, planMessage, planWeek, replanTask, saveWorkPlan, showWorkPlan, setShowWorkPlan,
-    atRisk, nowMs, updateTaskSession,
+    atRisk, nowMs, updateTaskSession, moveTaskSession, history, ratio,
   };
 }

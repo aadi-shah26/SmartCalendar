@@ -66,6 +66,9 @@ export interface TaskRow {
   is_completed: boolean;
   created_at: string;
   sessions: unknown;
+  /** Missing on databases without the learning columns yet. */
+  estimated_minutes?: number | null;
+  actual_minutes?: number | null;
 }
 
 /** A task as the page works with it. */
@@ -88,6 +91,10 @@ export interface Task {
   isDeleted: boolean;
   createdAt: string;
   sessions: TaskSession[];
+  /** The duration first given, before any edits; compared with the time it really took. */
+  estimatedMinutes: number | null;
+  /** Time worked on it, recorded when it's completed. */
+  actualMinutes: number | null;
 }
 
 /** A row of the `profiles` table, plus the signed-in user's email. */

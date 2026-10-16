@@ -1,9 +1,12 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { DEFAULT_WORK_PLAN } from '../../lib/scheduler';
 import type { ParsedItem } from '../../lib/nlp/parse';
 import { getTextColor } from '../../lib/calendar/colors';
+import { timeOfDay } from '../../lib/calendar/dates';
+import { blockMinutes, localMs } from '../../lib/calendar/drag';
 import { expandEvents, isTaskEventId, taskIdFromCalendarId } from '../../lib/calendar/events';
+import { eventFormFromEvent } from '../../lib/calendar/forms';
 import { pendingCheckIns } from '../../lib/calendar/tasks';
 import type { CalendarEvent, ViewMode } from '../../lib/calendar/types';
 import WorkPlanModal from '../../components/WorkPlanModal';
@@ -16,6 +19,7 @@ import ProfileModal from '../../components/calendar/ProfileModal';
 import QuickAddBar from '../../components/calendar/QuickAddBar';
 import SessionModal from '../../components/calendar/SessionModal';
 import TaskSidebar from '../../components/calendar/TaskSidebar';
+import type { MoveBlock } from '../../components/calendar/TimedEvents';
 import WeekView from '../../components/calendar/WeekView';
 import YearView from '../../components/calendar/YearView';
 import { useCalendarData } from './hooks/useCalendarData';
@@ -40,6 +44,12 @@ export default function CalendarPage() {
   const [view, setView] = useState<ViewMode>('Week');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showProfile, setShowProfile] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!moveError) return;
+    const id = window.setTimeout(() => setMoveError(null), 5000);
+    return () => window.clearTimeout(id);
+  }, [moveError]);
   // The open work session, found by its times: a replan can reorder a task's sessions.
   const [openSession, setOpenSession] = useState<{ taskId: string; start: string; end: string; openedAt: number } | null>(null);
   const sessionTask = openSession ? tasks.find(t => String(t.id) === openSession.taskId) : undefined;
@@ -82,6 +92,20 @@ export default function CalendarPage() {
     }
   };
 
+  // A block dragged to a new time or day: events are saved as moved; work sessions move and get
+  // pinned there, and the rest of the plan adjusts around them.
+  const moveBlock: MoveBlock = async (ev, date, startMin) => {
+    const endMin = startMin + blockMinutes(ev);
+    if (ev.isTaskSession && ev.sessionIndex !== undefined) {
+      const taskId = taskIdFromCalendarId(ev.id);
+      const row = tasks.find(t => String(t.id) === taskId)?.sessions?.[ev.sessionIndex];
+      if (row) await planner.moveTaskSession(taskId, row, localMs(date, startMin), localMs(date, endMin));
+      return;
+    }
+    const error = await eventActions.updateEvent(ev.id, { ...eventFormFromEvent(ev), date, start: timeOfDay(startMin), end: timeOfDay(endMin) });
+    if (error) setMoveError(`Couldn't move "${ev.title}": ${error}`);
+  };
+
   // Runs a save/delete; closes the modal on success, or shows the error in it.
   const submit = async (action: () => Promise<string | null>) => {
     modal.setError(null);
@@ -101,6 +125,7 @@ export default function CalendarPage() {
   };
 
   const viewProps = { currentDate, events: displayEvents, accentColor };
+  const toast = moveError ? { text: moveError, error: true } : google.message;
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', fontFamily: 'system-ui, sans-serif', backgroundColor: '#fff', color: '#1a1a1a' }}>
@@ -124,8 +149,8 @@ export default function CalendarPage() {
       {/* Content Row */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
-          {view === 'Week' && <WeekView {...viewProps} openAdd={modal.openNewEventAt} openDetail={openDetail} />}
-          {view === 'Day' && <DayView {...viewProps} openAdd={modal.openNewEventAt} openDetail={openDetail} />}
+          {view === 'Week' && <WeekView {...viewProps} openAdd={modal.openNewEventAt} openDetail={openDetail} onMove={moveBlock} />}
+          {view === 'Day' && <DayView {...viewProps} openAdd={modal.openNewEventAt} openDetail={openDetail} onMove={moveBlock} />}
           {view === 'Month' && <MonthView {...viewProps} openAdd={modal.openNewEventAt} openDetail={openDetail} />}
           {view === 'Year' && <YearView {...viewProps} onPickDay={d => { setCurrentDate(d); setView('Day'); }} />}
         </div>
@@ -134,6 +159,7 @@ export default function CalendarPage() {
           tasks={tasks}
           accentColor={accentColor}
           workPlan={data.workPlan}
+          estimateRatio={planner.ratio}
           planning={planner.planning}
           planMessage={planner.planMessage}
           createdMessage={taskActions.createdMessage}
@@ -152,14 +178,15 @@ export default function CalendarPage() {
         />
       </div>
 
-      {google.message && (
-        <div role="status" style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 100, maxWidth: 340, borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, boxShadow: '0 6px 20px rgba(0,0,0,0.15)', background: google.message.error ? '#fef2f2' : '#f0fdf4', color: google.message.error ? '#b91c1c' : '#16a34a' }}>{google.message.text}</div>
+      {toast && (
+        <div role="status" style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 100, maxWidth: 340, borderRadius: 8, padding: '10px 14px', fontSize: 13, fontWeight: 600, boxShadow: '0 6px 20px rgba(0,0,0,0.15)', background: toast.error ? '#fef2f2' : '#f0fdf4', color: toast.error ? '#b91c1c' : '#16a34a' }}>{toast.text}</div>
       )}
 
       {planner.showWorkPlan && (
         <WorkPlanModal
           initial={data.workPlan ?? DEFAULT_WORK_PLAN}
           firstTime={!data.workPlan}
+          history={planner.history}
           accentColor={accentColor}
           textOnAccent={getTextColor(accentColor)}
           onClose={() => planner.setShowWorkPlan(false)}

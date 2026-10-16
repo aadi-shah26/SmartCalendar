@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import { formatRatio, scaledMinutes, type EstimateHistory } from '../lib/calendar/estimates';
 import type { WorkPlanSettings } from '../lib/scheduler';
 
 const DAILY_OPTIONS = [60, 120, 180, 240, 360];
@@ -15,12 +16,14 @@ interface Props {
   textOnAccent: string;
   /** True the first time, before anything has been planned with these settings. */
   firstTime: boolean;
+  /** How long finished tasks really took compared to their estimates, once there's enough to go on. */
+  history: EstimateHistory | null;
   onClose: () => void;
   onSave: (settings: WorkPlanSettings, replan: boolean) => void;
 }
 
 // Asks how the user likes to work, so "Plan my week" can spread tasks the way they want.
-export default function WorkPlanModal({ initial, accentColor, textOnAccent, firstTime, onClose, onSave }: Props) {
+export default function WorkPlanModal({ initial, accentColor, textOnAccent, firstTime, history, onClose, onSave }: Props) {
   const [plan, setPlan] = useState<WorkPlanSettings>(initial);
   const set = (patch: Partial<WorkPlanSettings>) => setPlan(p => ({ ...p, ...patch }));
   const toggleDay = (d: number) =>
@@ -88,6 +91,28 @@ export default function WorkPlanModal({ initial, accentColor, textOnAccent, firs
             </button>
           ))}
         </div>
+
+        {history && (
+          <>
+            <label style={labelStyle}>Learn from my history</label>
+            <button type="button" onClick={() => set({ adjustForHistory: !plan.adjustForHistory })} style={{
+              ...pill(!!plan.adjustForHistory), width: '100%', textAlign: 'left', padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'flex-start',
+              background: plan.adjustForHistory ? `${accentColor}22` : '#fff', color: '#1a1a1a',
+            }}>
+              <span aria-hidden style={{ fontSize: 15, lineHeight: '18px' }}>{plan.adjustForHistory ? '☑' : '☐'}</span>
+              <span>
+                <span style={{ display: 'block', fontWeight: 700 }}>
+                  {history.ratio === 1 ? 'Your estimates are spot on' : `Tasks take you about ${formatRatio(history.ratio)} your estimate`}
+                </span>
+                <span style={{ display: 'block', fontSize: 12, fontWeight: 500, color: '#777', marginTop: 2 }}>
+                  From your last {history.samples} finished tasks. {history.ratio === 1
+                    ? 'Keep this on and plans will follow if that changes.'
+                    : `Plan each task for ${formatRatio(history.ratio)} its estimate, e.g. a 1h task gets ${minutes(scaledMinutes(60, history.ratio))}.`}
+                </span>
+              </span>
+            </button>
+          </>
+        )}
 
         <p style={{ ...hint, marginTop: 16 }}>
           Up to {hours(weeklyMax)} of task work a week. If a deadline can’t be met within this, I’ll go over and tell you.

@@ -7,6 +7,16 @@ const nowTop = () => {
   return minutesToTop(n.getHours() * 60 + n.getMinutes());
 };
 
+/** The current time, refreshed every minute. */
+export function useNowMs() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
+
 /** Pixel position of the current time down the grid, refreshed every minute. */
 export function useNowTop() {
   const [top, setTop] = useState(nowTop);

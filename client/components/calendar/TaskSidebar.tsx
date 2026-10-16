@@ -5,6 +5,7 @@ import { getTextColor } from '../../lib/calendar/colors';
 import { formatDeadline, formatDuration } from '../../lib/calendar/dates';
 import { byDeadline } from '../../lib/calendar/events';
 import type { ItemTab } from '../../lib/calendar/forms';
+import { formatRatio } from '../../lib/calendar/estimates';
 import { describeAtRisk } from '../../lib/calendar/replanMessages';
 import { isActiveTask, type CheckIn, type PendingCheckIn } from '../../lib/calendar/tasks';
 import type { StatusMessage, Task, TaskSession } from '../../lib/calendar/types';
@@ -42,8 +43,8 @@ function CheckInTray({ items, onCheckIn, onOpenSession }: {
   );
 }
 
-function TaskRow({ task, isCompleting, onOpen, onComplete }: {
-  task: Task; isCompleting: boolean; onOpen: () => void; onComplete: () => void;
+function TaskRow({ task, isCompleting, atRisk, onOpen, onComplete }: {
+  task: Task; isCompleting: boolean; atRisk: boolean; onOpen: () => void; onComplete: () => void;
 }) {
   return (
     <div onClick={() => !isCompleting && onOpen()}
@@ -74,6 +75,11 @@ function TaskRow({ task, isCompleting, onOpen, onComplete }: {
         <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>
           {(task.durationMinutes ?? task.duration) || 0} min
           {task.deadline && ` · Due ${formatDeadline(task.deadline)}`}
+          {atRisk && (
+            <span title="Not enough free time to finish before the deadline" style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 999, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', fontWeight: 700, fontSize: 10 }}>
+              At risk
+            </span>
+          )}
         </div>
       </div>
       <button onClick={e => { e.stopPropagation(); onOpen(); }} title="Edit task" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, borderRadius: 6, flexShrink: 0 }}>
@@ -133,10 +139,12 @@ function NewMenu({ accentColor, onNew }: { accentColor: string; onNew: (kind: It
 }
 
 export default function TaskSidebar({
-  tasks, accentColor, workPlan, planning, planMessage, createdMessage, completingTaskId, showUndo, atRisk, checkIns,
+  tasks, accentColor, workPlan, estimateRatio, planning, planMessage, createdMessage, completingTaskId, showUndo, atRisk, checkIns,
   onNew, onPlanWeek, onOpenWorkPlan, onOpenTask, onCompleteTask, onUndoDelete, onCheckIn, onOpenSession,
 }: {
   tasks: Task[]; accentColor: string; workPlan: WorkPlanSettings | null;
+  /** What task estimates are scaled by when planning (1 when not learning from history). */
+  estimateRatio: number;
   planning: boolean; planMessage: StatusMessage | null; createdMessage: string | null;
   completingTaskId: string | null; showUndo: boolean; atRisk: AtRisk[]; checkIns: PendingCheckIn[];
   onNew: (kind: ItemTab) => void; onPlanWeek: () => void; onOpenWorkPlan: () => void;
@@ -146,6 +154,7 @@ export default function TaskSidebar({
 }) {
   const title = (id: string) => tasks.find(t => String(t.id) === id)?.title ?? 'A task';
   const activeTasks = tasks.filter(isActiveTask);
+  const riskyIds = new Set(atRisk.map(r => r.taskId));
   return (
     <div style={{ width: 300, borderLeft: '1px solid #e5e5e5', display: 'flex', flexDirection: 'column', background: '#fafafa' }}>
       <div style={{ padding: '16px 18px 14px', borderBottom: '1px solid #e5e5e5' }}>
@@ -178,6 +187,7 @@ export default function TaskSidebar({
         {workPlan && (
           <p style={{ margin: '6px 2px 0', fontSize: 11, color: '#999' }}>
             Up to {workPlan.dailyMinutes / 60}h a day · {workPlan.sessionMinutes}-min sessions · {workPlan.spread === 'steady' ? 'a little each day' : 'as early as possible'}
+            {estimateRatio !== 1 && ` · tasks planned at ${formatRatio(estimateRatio)} their estimate`}
           </p>
         )}
         {planMessage && (
@@ -213,7 +223,7 @@ export default function TaskSidebar({
           <div style={{ color: '#bbb', fontSize: 13, textAlign: 'center', marginTop: 32 }}>No tasks yet.<br />Click &quot;+ New&quot; to add one.</div>
         ) : (
           activeTasks.sort(byDeadline).map((t, i) => (
-            <TaskRow key={t.id ?? i} task={t} isCompleting={completingTaskId === t.id}
+            <TaskRow key={t.id ?? i} task={t} isCompleting={completingTaskId === t.id} atRisk={riskyIds.has(String(t.id))}
               onOpen={() => onOpenTask(t)} onComplete={() => onCompleteTask(t.id)} />
           ))
         )}

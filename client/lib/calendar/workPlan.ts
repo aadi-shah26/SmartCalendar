@@ -18,5 +18,6 @@ export function readWorkPlan(fromProfile: unknown, userId: string): WorkPlanSett
     sessionMinutes: p.sessionMinutes,
     workDays: p.workDays.filter(d => Number.isInteger(d) && d >= 0 && d <= 6),
     spread: p.spread === 'asap' ? 'asap' : 'steady',
+    ...(p.adjustForHistory ? { adjustForHistory: true } : {}),
   };
 }

@@ -4,15 +4,16 @@ import { getTextColor } from '../../lib/calendar/colors';
 import { DAYS, HOURS, formatEventTime, formatHour, getWeekStart, toDateKey } from '../../lib/calendar/dates';
 import { DAY_HEIGHT, HOUR_HEIGHT } from '../../lib/calendar/layout';
 import type { CalendarEvent } from '../../lib/calendar/types';
-import { DayEvents, NowIndicator } from './TimedEvents';
+import { DayEvents, NowIndicator, type MoveBlock } from './TimedEvents';
 import { hourAtClick, useNowTop, useScrollToNow } from './timeGrid';
 
 const startTimeLabel = (ev: CalendarEvent) => formatEventTime(ev.start_time);
 
-export default function WeekView({ currentDate, events, openAdd, openDetail, accentColor }: {
+export default function WeekView({ currentDate, events, openAdd, openDetail, onMove, accentColor }: {
   currentDate: Date; events: CalendarEvent[];
   openAdd: (date: string, hour: number) => void;
   openDetail: (ev: CalendarEvent) => void;
+  onMove?: MoveBlock;
   accentColor: string;
 }) {
   const weekStart = getWeekStart(currentDate);
@@ -67,11 +68,11 @@ export default function WeekView({ currentDate, events, openAdd, openDetail, acc
             {days.map((d, di) => {
               const key = toDateKey(d);
               return (
-                <div key={di} style={{ position: 'relative', borderLeft: '1px solid #e5e5e5', height: DAY_HEIGHT, cursor: 'pointer' }}
+                <div key={di} data-day-column={key} style={{ position: 'relative', borderLeft: '1px solid #e5e5e5', height: DAY_HEIGHT, cursor: 'pointer' }}
                   onClick={e => openAdd(key, hourAtClick(e))}>
                   {key === todayKey && <NowIndicator top={nowTop} dotClickable />}
                   <DayEvents events={events.filter(e => e.date === key)} size="sm" accentColor={accentColor}
-                    onOpen={openDetail} timeLabel={startTimeLabel} />
+                    onOpen={openDetail} onMove={onMove} timeLabel={startTimeLabel} />
                 </div>
               );
             })}

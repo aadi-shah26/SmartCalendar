@@ -42,6 +42,8 @@ export interface WorkPlanSettings {
   sessionMinutes: number;
   workDays: number[];
   spread: 'steady' | 'asap';
+  /** Plan each task for how long tasks have really been taking, not just its estimate. */
+  adjustForHistory?: boolean;
 }
 
 export const DEFAULT_WORK_PLAN: WorkPlanSettings = {

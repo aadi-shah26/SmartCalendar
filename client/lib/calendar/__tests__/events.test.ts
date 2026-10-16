@@ -5,7 +5,7 @@ import type { CalendarEvent, Task } from '../types';
 const task = (over: Partial<Task> = {}): Task => ({
   id: 't1', title: 'Essay', description: '', duration: 120, durationMinutes: 120, priority: 'Medium', energyLevel: 'Medium',
   deadline: null, isFixedTime: false, fixedStart: null, fixedEnd: null, isSplittable: false, chunkSize: null,
-  color: '#abcdef', isCompleted: false, isDeleted: false, createdAt: '', sessions: [], ...over,
+  color: '#abcdef', isCompleted: false, isDeleted: false, createdAt: '', sessions: [], estimatedMinutes: null, actualMinutes: null, ...over,
 });
 
 describe('task calendar ids', () => {

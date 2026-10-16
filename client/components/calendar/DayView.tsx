@@ -3,15 +3,16 @@ import { useRef } from 'react';
 import { HOURS, formatEventTime, formatHour, toDateKey } from '../../lib/calendar/dates';
 import { DAY_HEIGHT, HOUR_HEIGHT } from '../../lib/calendar/layout';
 import type { CalendarEvent } from '../../lib/calendar/types';
-import { DayEvents, NowIndicator } from './TimedEvents';
+import { DayEvents, NowIndicator, type MoveBlock } from './TimedEvents';
 import { hourAtClick, useNowTop, useScrollToNow } from './timeGrid';
 
 const timeRangeLabel = (ev: CalendarEvent) => `${formatEventTime(ev.start_time)} – ${formatEventTime(ev.end_time)}`;
 
-export default function DayView({ currentDate, events, openAdd, openDetail, accentColor }: {
+export default function DayView({ currentDate, events, openAdd, openDetail, onMove, accentColor }: {
   currentDate: Date; events: CalendarEvent[];
   openAdd: (date: string, hour: number) => void;
   openDetail: (ev: CalendarEvent) => void;
+  onMove?: MoveBlock;
   accentColor: string;
 }) {
   const key = toDateKey(currentDate);
@@ -32,7 +33,7 @@ export default function DayView({ currentDate, events, openAdd, openDetail, acce
           ))}
         </div>
         {/* Events column */}
-        <div style={{ flex: 1, borderLeft: '1px solid #e5e5e5', position: 'relative', height: DAY_HEIGHT, cursor: 'pointer' }}
+        <div data-day-column={key} style={{ flex: 1, borderLeft: '1px solid #e5e5e5', position: 'relative', height: DAY_HEIGHT, cursor: 'pointer' }}
           onClick={e => openAdd(key, hourAtClick(e))}>
           {/* Hour lines */}
           {HOURS.map(hour => (
@@ -40,7 +41,7 @@ export default function DayView({ currentDate, events, openAdd, openDetail, acce
           ))}
           {isToday && <NowIndicator top={nowTop} />}
           <DayEvents events={events.filter(e => e.date === key)} size="md" accentColor={accentColor}
-            onOpen={openDetail} timeLabel={timeRangeLabel} />
+            onOpen={openDetail} onMove={onMove} timeLabel={timeRangeLabel} />
         </div>
       </div>
     </div>
