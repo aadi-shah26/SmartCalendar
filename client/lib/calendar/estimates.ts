@@ -58,5 +58,21 @@ export function scaledMinutes(minutes: number, ratio: number): number {
   return Math.max(5, Math.round((minutes * ratio) / 5) * 5);
 }
 
+/** The learning columns a task write can carry. */
+export type Learning = { estimated_minutes?: number; actual_minutes?: number };
+
+/**
+ * Writes `row` plus the learning columns, or just `row` on a database that doesn't have those
+ * columns yet (supabase/schema.sql adds them), so saving never fails because of them.
+ */
+export async function withLearning<T extends { error: { message: string } | null }>(
+  learning: Learning, write: (extra: Learning) => PromiseLike<T>,
+): Promise<T> {
+  if (Object.keys(learning).length === 0) return write({});
+  const result = await write(learning);
+  if (result.error && /estimated_minutes|actual_minutes/.test(result.error.message)) return write({});
+  return result;
+}
+
 /** "1.4×", "0.85×". */
 export const formatRatio = (ratio: number) => `${Number(ratio.toFixed(2))}×`;

@@ -1,11 +1,11 @@
 import { useState, type CSSProperties } from 'react';
-import { Pin } from 'lucide-react';
+import { Pin, Timer } from 'lucide-react';
 import { getTextColor } from '../../lib/calendar/colors';
 import { formatDuration } from '../../lib/calendar/dates';
 import type { CheckIn } from '../../lib/calendar/tasks';
 import type { TaskSession } from '../../lib/calendar/types';
 import ModalShell from './ModalShell';
-import { cancelBtnStyle } from './styles';
+import { cancelBtnStyle, focusBtnStyle } from './styles';
 
 const STATUS_LABEL: Record<string, string> = {
   done: 'Done',
@@ -25,10 +25,13 @@ function sessionTime(s: TaskSession) {
  * One work session: say how it went once it has started (the plan adjusts to the answer), or,
  * before it, say you can't make it or pin it where it is.
  */
-export default function SessionModal({ title, session, nowMs, accentColor, onChange, onEditTask, onClose }: {
+export default function SessionModal({ title, session, nowMs, accentColor, onChange, onEditTask, onStartFocus, onClose }: {
   title: string; session: TaskSession; nowMs: number; accentColor: string;
   onChange: (change: CheckIn | { pinned: boolean }) => void;
-  onEditTask: () => void; onClose: () => void;
+  onEditTask: () => void;
+  /** Opens the focus timer for this session (not offered once it's done). */
+  onStartFocus: () => void;
+  onClose: () => void;
 }) {
   const [choosingMinutes, setChoosingMinutes] = useState(false);
   const startMs = new Date(session.start).getTime();
@@ -111,6 +114,11 @@ export default function SessionModal({ title, session, nowMs, accentColor, onCha
 
       <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
         <button style={cancelBtnStyle} onClick={() => { onClose(); onEditTask(); }}>Edit task</button>
+        {status !== 'done' && (
+          <button style={{ ...focusBtnStyle, flex: 1, borderRadius: 12 }} onClick={onStartFocus}>
+            <Timer style={{ width: 15, height: 15 }} /> Start focus timer
+          </button>
+        )}
       </div>
     </ModalShell>
   );

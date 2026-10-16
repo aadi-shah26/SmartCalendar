@@ -1,5 +1,6 @@
 'use client';
 import type { CSSProperties } from 'react';
+import { Timer } from 'lucide-react';
 import { getTextColor } from '../../lib/calendar/colors';
 import { shiftEndWithStart, type EventForm, type ItemTab, type TaskForm } from '../../lib/calendar/forms';
 import type { EnergyLevel, RecurrenceType, TaskPriority } from '../../lib/calendar/types';
@@ -7,7 +8,7 @@ import ColorPicker from './ColorPicker';
 import DateTimeField from './DateTimeField';
 import ModalShell from './ModalShell';
 import TimePicker from './TimePicker';
-import { cancelBtnStyle, deleteBtnStyle, errorTextStyle, inputStyle, labelStyle, saveBtnStyle, twoColumns } from './styles';
+import { cancelBtnStyle, deleteBtnStyle, errorTextStyle, focusBtnStyle, inputStyle, labelStyle, saveBtnStyle, twoColumns } from './styles';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const headingStyle: CSSProperties = { margin: '0 0 16px', fontWeight: 800, fontSize: 18 };
@@ -165,7 +166,7 @@ function EventFields({ form, onChange, accentColor }: {
 export default function ItemModal({
   tab, onTabChange, accentColor, error, isEditingTask, isEditingEvent,
   taskForm, onTaskChange, eventForm, onEventChange,
-  onClose, onSaveTask, onDeleteTask, onSaveEvent, onDeleteEvent,
+  onClose, onSaveTask, onDeleteTask, onSaveEvent, onDeleteEvent, onStartFocus,
 }: {
   tab: ItemTab; onTabChange: (tab: ItemTab) => void; accentColor: string; error: string | null;
   isEditingTask: boolean; isEditingEvent: boolean;
@@ -173,6 +174,8 @@ export default function ItemModal({
   eventForm: EventForm; onEventChange: (patch: Partial<EventForm>) => void;
   onClose: () => void; onSaveTask: () => void; onDeleteTask: () => void;
   onSaveEvent: () => void; onDeleteEvent: () => void;
+  /** Opens the focus timer for the task being edited. */
+  onStartFocus?: () => void;
 }) {
   const tabStyle = (active: boolean): CSSProperties => ({
     padding: '10px 20px', border: 'none', background: 'none', fontWeight: 700, fontSize: 14,
@@ -190,7 +193,14 @@ export default function ItemModal({
 
       {tab === 'task' ? (
         <>
-          <h2 style={headingStyle}>{isEditingTask ? 'Edit Task' : 'New Task'}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+            <h2 style={{ ...headingStyle, margin: 0 }}>{isEditingTask ? 'Edit Task' : 'New Task'}</h2>
+            {isEditingTask && onStartFocus && (
+              <button type="button" onClick={onStartFocus} style={focusBtnStyle}>
+                <Timer style={{ width: 15, height: 15 }} /> Start focus timer
+              </button>
+            )}
+          </div>
           <TaskFields form={taskForm} onChange={onTaskChange} />
           {error && <div style={errorTextStyle}>{error}</div>}
           <Buttons accentColor={accentColor} marginTop={20} onCancel={onClose}

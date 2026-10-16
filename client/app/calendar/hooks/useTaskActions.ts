@@ -2,26 +2,11 @@
 import { useState, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
 import { taskRowFromForm, type TaskForm } from '../../../lib/calendar/forms';
-import { workedMinutes } from '../../../lib/calendar/estimates';
+import { withLearning, workedMinutes, type Learning } from '../../../lib/calendar/estimates';
 import { isPlannable, schedulingKey, taskFromRow } from '../../../lib/calendar/tasks';
 import type { Task } from '../../../lib/calendar/types';
 
 const UNDO_WINDOW_MS = 5000;
-
-type Learning = { estimated_minutes?: number; actual_minutes?: number };
-
-/**
- * Writes `row` plus the learning columns, or just `row` on a database that doesn't have those
- * columns yet (supabase/schema.sql adds them), so saving never fails because of them.
- */
-async function withLearning<T extends { error: { message: string } | null }>(
-  learning: Learning, write: (extra: Learning) => PromiseLike<T>,
-): Promise<T> {
-  if (Object.keys(learning).length === 0) return write({});
-  const result = await write(learning);
-  if (result.error && /estimated_minutes|actual_minutes/.test(result.error.message)) return write({});
-  return result;
-}
 
 /** A plannable task's duration, as its first estimate. */
 const estimateOf = (row: { is_fixed_time: boolean; duration_minutes: number }): Learning =>

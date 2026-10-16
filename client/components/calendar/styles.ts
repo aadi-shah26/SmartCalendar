@@ -28,6 +28,12 @@ export const cancelBtnStyle: CSSProperties = {
 export const deleteBtnStyle: CSSProperties = { ...cancelBtnStyle, color: '#e53e3e', borderColor: '#e53e3e' };
 export const errorTextStyle: CSSProperties = { fontSize: 12, color: '#dc2626', marginTop: 10 };
 export const twoColumns: CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 };
+/** "Start focus timer": tomato red, like the focus page. */
+export const focusBtnStyle: CSSProperties = {
+  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '8px 14px', borderRadius: 999,
+  border: 'none', background: '#e8594a', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+  boxShadow: '0 4px 12px rgba(232,89,74,0.35)', whiteSpace: 'nowrap',
+};
 
 /** Diagonal stripes marking a planned work session. */
 export const SESSION_STRIPES: CSSProperties = {

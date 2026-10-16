@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { DEFAULT_WORK_PLAN } from '../../lib/scheduler';
 import type { ParsedItem } from '../../lib/nlp/parse';
 import { getTextColor } from '../../lib/calendar/colors';
@@ -32,6 +33,7 @@ import { usePlanner } from './hooks/usePlanner';
 import { useTaskActions } from './hooks/useTaskActions';
 
 export default function CalendarPage() {
+  const router = useRouter();
   const data = useCalendarData();
   const { accentColor, events, tasks } = data;
   const google = useGoogleCalendar(data.reloadEvents);
@@ -108,6 +110,12 @@ export default function CalendarPage() {
     }
     const error = await eventActions.updateEvent(ev.id, { ...eventFormFromEvent(ev), date, start: timeOfDay(startMin), end: timeOfDay(endMin) });
     if (error) setMoveError(`Couldn't move "${ev.title}": ${error}`);
+  };
+
+  /** The focus timer page for a task, tied to one of its planned sessions when started from it. */
+  const openFocus = (taskId: string, sessionStart?: string) => {
+    const query = new URLSearchParams({ task: taskId, ...(sessionStart ? { session: sessionStart } : {}) });
+    router.push(`/focus?${query}`);
   };
 
   // Keyboard shortcuts (see lib/calendar/shortcuts.ts). With a window open, only Esc works:
@@ -256,6 +264,7 @@ export default function CalendarPage() {
           onDeleteTask={() => { taskActions.deleteTask(modal.editingTaskId!); modal.close(); }}
           onSaveEvent={saveEvent}
           onDeleteEvent={() => submit(() => eventActions.deleteEvent(modal.editingEventId!))}
+          onStartFocus={() => openFocus(modal.editingTaskId!)}
         />
       )}
 
@@ -267,6 +276,7 @@ export default function CalendarPage() {
           accentColor={accentColor}
           onChange={change => planner.updateTaskSession(String(sessionTask.id), session, change)}
           onEditTask={() => modal.openTask(sessionTask)}
+          onStartFocus={() => openFocus(String(sessionTask.id), session.start)}
           onClose={() => setOpenSession(null)}
         />
       )}
