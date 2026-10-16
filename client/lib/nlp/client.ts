@@ -1,4 +1,5 @@
 import { supabase } from '../supabaseClient';
+import type { BreakdownRequest, Step } from './breakdown';
 import type { ParsedItem } from './parse';
 
 // Browser-side call to /api/parse. Sends the user's local "now" so relative dates
@@ -21,4 +22,18 @@ export async function parseText(text: string): Promise<ParsedItem> {
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.error ?? `Request failed (${res.status}).`);
   return json.item as ParsedItem;
+}
+
+// Browser-side call to /api/breakdown: suggested steps for a task, to review before saving.
+export async function suggestSteps(req: BreakdownRequest): Promise<Step[]> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error('Not signed in.');
+  const res = await fetch('/api/breakdown', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.error ?? `Request failed (${res.status}).`);
+  return json.steps as Step[];
 }

@@ -1,7 +1,8 @@
 'use client';
 import { useState, type Dispatch, type SetStateAction } from 'react';
 import { supabase } from '../../../lib/supabaseClient';
-import { taskRowFromForm, type TaskForm } from '../../../lib/calendar/forms';
+import { taskFormFromTask, taskRowFromForm, type TaskForm } from '../../../lib/calendar/forms';
+import { stepDeadlines, type Step } from '../../../lib/nlp/breakdown';
 import { withLearning, workedMinutes, type Learning } from '../../../lib/calendar/estimates';
 import { isPlannable, schedulingKey, taskFromRow } from '../../../lib/calendar/tasks';
 import type { Task } from '../../../lib/calendar/types';
@@ -94,5 +95,40 @@ export function useTaskActions({ tasks, setTasks, userId, replanTask }: {
     return null;
   }
 
-  return { saveTask, deleteTask, undoDelete, completeTask, createdMessage, completingTaskId, hasUndo: undoInfo !== null };
+  /**
+   * Replaces a task with the steps it was broken into: each step becomes a task like the original
+   * (same priority, energy and color), due in order before the original's deadline. The original
+   * is removed (with undo) when `removeOriginal` is set. Resolves to an error message, or null.
+   */
+  async function createSteps(parent: Task, steps: Step[], removeOriginal: boolean): Promise<string | null> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return 'Not signed in.';
+    const base = taskRowFromForm(taskFormFromTask(parent));
+    const deadlines = stepDeadlines(Date.now(), parent.deadline, steps.map(s => s.minutes));
+    const rows = steps.map((step, i) => ({
+      ...base,
+      title: step.title.trim(),
+      description: `Step ${i + 1} of ${steps.length} for "${parent.title}"`,
+      duration_minutes: step.minutes,
+      deadline: deadlines[i],
+      is_fixed_time: false, fixed_start: null, fixed_end: null,
+      user_id: session.user.id,
+    }));
+    // Each step's minutes are its first estimate (left out on databases without that column).
+    const insert = (withEstimates: boolean) => supabase.from('tasks')
+      .insert(rows.map(row => (withEstimates ? { ...row, estimated_minutes: row.duration_minutes } : row))).select();
+    let { data, error } = await insert(true);
+    if (error && /estimated_minutes/.test(error.message)) ({ data, error } = await insert(false));
+    if (error || !data) return error?.message ?? 'Failed to save the steps.';
+    const created = data.map(taskFromRow);
+    const nextTasks = [...created, ...tasks];
+    setTasks(nextTasks);
+    setCreatedMessage(`Added ${created.length} steps for "${parent.title}"`);
+    setTimeout(() => setCreatedMessage(null), 3000);
+    if (removeOriginal) deleteTask(parent.id);
+    for (const t of created) if (isPlannable(t)) await replanTask(nextTasks, String(t.id));
+    return null;
+  }
+
+  return { saveTask, deleteTask, undoDelete, completeTask, createSteps, createdMessage, completingTaskId, hasUndo: undoInfo !== null };
 }

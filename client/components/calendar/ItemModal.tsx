@@ -1,6 +1,6 @@
 'use client';
 import type { CSSProperties } from 'react';
-import { Timer } from 'lucide-react';
+import { Sparkles, Timer } from 'lucide-react';
 import { getTextColor } from '../../lib/calendar/colors';
 import { shiftEndWithStart, type EventForm, type ItemTab, type TaskForm } from '../../lib/calendar/forms';
 import type { EnergyLevel, RecurrenceType, TaskPriority } from '../../lib/calendar/types';
@@ -166,7 +166,7 @@ function EventFields({ form, onChange, accentColor }: {
 export default function ItemModal({
   tab, onTabChange, accentColor, error, isEditingTask, isEditingEvent,
   taskForm, onTaskChange, eventForm, onEventChange,
-  onClose, onSaveTask, onDeleteTask, onSaveEvent, onDeleteEvent, onStartFocus,
+  onClose, onSaveTask, onDeleteTask, onSaveEvent, onDeleteEvent, onStartFocus, onBreakdown,
 }: {
   tab: ItemTab; onTabChange: (tab: ItemTab) => void; accentColor: string; error: string | null;
   isEditingTask: boolean; isEditingEvent: boolean;
@@ -176,6 +176,8 @@ export default function ItemModal({
   onSaveEvent: () => void; onDeleteEvent: () => void;
   /** Opens the focus timer for the task being edited. */
   onStartFocus?: () => void;
+  /** Opens "Break into steps" for the task being edited. */
+  onBreakdown?: () => void;
 }) {
   const tabStyle = (active: boolean): CSSProperties => ({
     padding: '10px 20px', border: 'none', background: 'none', fontWeight: 700, fontSize: 14,
@@ -195,10 +197,20 @@ export default function ItemModal({
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
             <h2 style={{ ...headingStyle, margin: 0 }}>{isEditingTask ? 'Edit Task' : 'New Task'}</h2>
-            {isEditingTask && onStartFocus && (
-              <button type="button" onClick={onStartFocus} style={focusBtnStyle}>
-                <Timer style={{ width: 15, height: 15 }} /> Start focus timer
-              </button>
+            {isEditingTask && (
+              <div style={{ display: 'flex', gap: 6 }}>
+                {onBreakdown && (
+                  <button type="button" onClick={onBreakdown} title="Let AI split this task into smaller steps"
+                    style={{ ...focusBtnStyle, background: '#fff', color: '#1a1a1a', border: '1px solid #e0e0e0', boxShadow: 'none' }}>
+                    <Sparkles style={{ width: 14, height: 14 }} /> Break into steps
+                  </button>
+                )}
+                {onStartFocus && (
+                  <button type="button" onClick={onStartFocus} style={focusBtnStyle}>
+                    <Timer style={{ width: 15, height: 15 }} /> Start focus timer
+                  </button>
+                )}
+              </div>
             )}
           </div>
           <TaskFields form={taskForm} onChange={onTaskChange} />

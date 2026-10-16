@@ -21,6 +21,7 @@ import ProfileModal from '../../components/calendar/ProfileModal';
 import QuickAddBar from '../../components/calendar/QuickAddBar';
 import SessionModal from '../../components/calendar/SessionModal';
 import ShortcutsHelp from '../../components/calendar/ShortcutsHelp';
+import BreakdownModal from '../../components/calendar/BreakdownModal';
 import TaskSidebar from '../../components/calendar/TaskSidebar';
 import type { MoveBlock } from '../../components/calendar/TimedEvents';
 import WeekView from '../../components/calendar/WeekView';
@@ -50,6 +51,8 @@ export default function CalendarPage() {
   const [showProfile, setShowProfile] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [breakdownTaskId, setBreakdownTaskId] = useState<string | null>(null);
+  const breakdownTask = breakdownTaskId ? tasks.find(t => String(t.id) === breakdownTaskId) : undefined;
   const quickAddRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!moveError) return;
@@ -120,7 +123,7 @@ export default function CalendarPage() {
 
   // Keyboard shortcuts (see lib/calendar/shortcuts.ts). With a window open, only Esc works:
   // it closes the window on top.
-  const windowOpen = showShortcuts || modal.isOpen || !!openSession || showProfile || planner.showWorkPlan;
+  const windowOpen = showShortcuts || !!breakdownTask || modal.isOpen || !!openSession || showProfile || planner.showWorkPlan;
   const runShortcut = (action: ShortcutAction) => {
     switch (action) {
       case 'newTask': return modal.openNew('task');
@@ -136,6 +139,7 @@ export default function CalendarPage() {
       case 'help': return setShowShortcuts(true);
       case 'close':
         if (showShortcuts) return setShowShortcuts(false);
+        if (breakdownTask) return setBreakdownTaskId(null);
         if (openSession) return setOpenSession(null);
         if (modal.isOpen) return modal.close();
         if (showProfile) return setShowProfile(false);
@@ -265,6 +269,7 @@ export default function CalendarPage() {
           onSaveEvent={saveEvent}
           onDeleteEvent={() => submit(() => eventActions.deleteEvent(modal.editingEventId!))}
           onStartFocus={() => openFocus(modal.editingTaskId!)}
+          onBreakdown={() => { setBreakdownTaskId(modal.editingTaskId); modal.close(); }}
         />
       )}
 
@@ -282,6 +287,11 @@ export default function CalendarPage() {
       )}
 
       {showShortcuts && <ShortcutsHelp onClose={() => setShowShortcuts(false)} />}
+
+      {breakdownTask && (
+        <BreakdownModal task={breakdownTask} accentColor={accentColor} onClose={() => setBreakdownTaskId(null)}
+          onCreate={(steps, removeOriginal) => taskActions.createSteps(breakdownTask, steps, removeOriginal)} />
+      )}
 
       {showProfile && (
         <ProfileModal profile={data.profile} accentColor={accentColor} onSave={data.saveProfile} onClose={() => setShowProfile(false)} />
