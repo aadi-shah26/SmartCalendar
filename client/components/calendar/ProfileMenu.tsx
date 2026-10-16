@@ -8,9 +8,9 @@ interface MenuItem {
   onSelect?: () => void;
 }
 
-export default function ProfileMenu({ googleConnected, googleBusy, onProfile, onConnectGoogle, onSyncGoogle, onDisconnectGoogle, onSignOut }: {
+export default function ProfileMenu({ googleConnected, googleBusy, onProfile, onShortcuts, onConnectGoogle, onSyncGoogle, onDisconnectGoogle, onSignOut }: {
   googleConnected: boolean; googleBusy: boolean;
-  onProfile: () => void; onConnectGoogle: () => void; onSyncGoogle: () => void;
+  onProfile: () => void; onShortcuts: () => void; onConnectGoogle: () => void; onSyncGoogle: () => void;
   onDisconnectGoogle: () => void; onSignOut: () => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -24,6 +24,7 @@ export default function ProfileMenu({ googleConnected, googleBusy, onProfile, on
       ? { label: 'Sync Google Calendar', onSelect: google(onSyncGoogle) }
       : { label: 'Connect Google Calendar', onSelect: google(onConnectGoogle) },
     ...(googleConnected ? [{ label: 'Disconnect Google Calendar', onSelect: google(onDisconnectGoogle) }] : []),
+    { label: 'Keyboard shortcuts', onSelect: closing(onShortcuts) },
     { label: 'Sign out', onSelect: onSignOut },
   ];
 

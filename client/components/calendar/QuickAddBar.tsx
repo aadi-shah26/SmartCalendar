@@ -1,11 +1,15 @@
 'use client';
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type RefObject } from 'react';
 import { Sparkles } from 'lucide-react';
 import { parseText } from '../../lib/nlp/client';
 import type { ParsedItem } from '../../lib/nlp/parse';
 
 /** One line of plain English → a parsed event or task, handed to `onParsed` to review. */
-export default function QuickAddBar({ onParsed }: { onParsed: (item: ParsedItem) => void }) {
+export default function QuickAddBar({ onParsed, inputRef }: {
+  onParsed: (item: ParsedItem) => void;
+  /** Lets the page focus the field (the "/" shortcut). */
+  inputRef?: RefObject<HTMLInputElement | null>;
+}) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +34,9 @@ export default function QuickAddBar({ onParsed }: { onParsed: (item: ParsedItem)
     <form onSubmit={submit} style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${error ? '#e53e3e' : '#e0e0e0'}`, borderRadius: 8, padding: '6px 6px 6px 12px' }}>
       <Sparkles style={{ width: 14, height: 14, color: '#999', flexShrink: 0 }} />
       <input
+        ref={inputRef}
         value={text}
+        onKeyDown={e => { if (e.key === 'Escape') e.currentTarget.blur(); }}
         onChange={e => { setText(e.target.value); setError(null); }}
         placeholder='Quick add: "essay due fri, 3h"'
         disabled={busy}

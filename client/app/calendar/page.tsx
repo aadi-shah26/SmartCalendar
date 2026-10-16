@@ -1,12 +1,13 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_WORK_PLAN } from '../../lib/scheduler';
 import type { ParsedItem } from '../../lib/nlp/parse';
 import { getTextColor } from '../../lib/calendar/colors';
-import { timeOfDay } from '../../lib/calendar/dates';
+import { stepDate, timeOfDay } from '../../lib/calendar/dates';
 import { blockMinutes, localMs } from '../../lib/calendar/drag';
 import { expandEvents, isTaskEventId, taskIdFromCalendarId } from '../../lib/calendar/events';
 import { eventFormFromEvent } from '../../lib/calendar/forms';
+import { shortcutFor, type ShortcutAction } from '../../lib/calendar/shortcuts';
 import { pendingCheckIns } from '../../lib/calendar/tasks';
 import type { CalendarEvent, ViewMode } from '../../lib/calendar/types';
 import WorkPlanModal from '../../components/WorkPlanModal';
@@ -18,6 +19,7 @@ import ProfileMenu from '../../components/calendar/ProfileMenu';
 import ProfileModal from '../../components/calendar/ProfileModal';
 import QuickAddBar from '../../components/calendar/QuickAddBar';
 import SessionModal from '../../components/calendar/SessionModal';
+import ShortcutsHelp from '../../components/calendar/ShortcutsHelp';
 import TaskSidebar from '../../components/calendar/TaskSidebar';
 import type { MoveBlock } from '../../components/calendar/TimedEvents';
 import WeekView from '../../components/calendar/WeekView';
@@ -45,6 +47,8 @@ export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showProfile, setShowProfile] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const quickAddRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (!moveError) return;
     const id = window.setTimeout(() => setMoveError(null), 5000);
@@ -106,6 +110,42 @@ export default function CalendarPage() {
     if (error) setMoveError(`Couldn't move "${ev.title}": ${error}`);
   };
 
+  // Keyboard shortcuts (see lib/calendar/shortcuts.ts). With a window open, only Esc works:
+  // it closes the window on top.
+  const windowOpen = showShortcuts || modal.isOpen || !!openSession || showProfile || planner.showWorkPlan;
+  const runShortcut = (action: ShortcutAction) => {
+    switch (action) {
+      case 'newTask': return modal.openNew('task');
+      case 'newEvent': return modal.openNew('event');
+      case 'today': return setCurrentDate(new Date());
+      case 'prev': return setCurrentDate(stepDate(currentDate, view, -1));
+      case 'next': return setCurrentDate(stepDate(currentDate, view, 1));
+      case 'viewDay': return setView('Day');
+      case 'viewWeek': return setView('Week');
+      case 'viewMonth': return setView('Month');
+      case 'viewYear': return setView('Year');
+      case 'quickAdd': return quickAddRef.current?.focus();
+      case 'help': return setShowShortcuts(true);
+      case 'close':
+        if (showShortcuts) return setShowShortcuts(false);
+        if (openSession) return setOpenSession(null);
+        if (modal.isOpen) return modal.close();
+        if (showProfile) return setShowProfile(false);
+        return planner.setShowWorkPlan(false);
+    }
+  };
+  // Re-subscribes each render so the handler always sees the current state.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const action = shortcutFor(e, windowOpen);
+      if (!action) return;
+      e.preventDefault();
+      runShortcut(action);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  });
+
   // Runs a save/delete; closes the modal on success, or shows the error in it.
   const submit = async (action: () => Promise<string | null>) => {
     modal.setError(null);
@@ -134,11 +174,12 @@ export default function CalendarPage() {
       <div style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid #e5e5e5', gap: 16 }}>
         <DateNavigator view={view} currentDate={currentDate} setCurrentDate={setCurrentDate} />
         <ViewSwitcher view={view} setView={setView} accentColor={accentColor} />
-        <QuickAddBar onParsed={reviewParsed} />
+        <QuickAddBar onParsed={reviewParsed} inputRef={quickAddRef} />
         <ProfileMenu
           googleConnected={google.connected}
           googleBusy={google.busy}
           onProfile={() => setShowProfile(true)}
+          onShortcuts={() => setShowShortcuts(true)}
           onConnectGoogle={google.connect}
           onSyncGoogle={() => google.sync()}
           onDisconnectGoogle={google.disconnect}
@@ -229,6 +270,8 @@ export default function CalendarPage() {
           onClose={() => setOpenSession(null)}
         />
       )}
+
+      {showShortcuts && <ShortcutsHelp onClose={() => setShowShortcuts(false)} />}
 
       {showProfile && (
         <ProfileModal profile={data.profile} accentColor={accentColor} onSave={data.saveProfile} onClose={() => setShowProfile(false)} />
