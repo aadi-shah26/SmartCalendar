@@ -8,8 +8,8 @@ import {
 import type { CalendarEvent, Task } from '../../../lib/calendar/types';
 
 /**
- * State of the add/edit modal. Both forms persist while it's closed: each way of opening it
- * resets or fills only the form for its own tab.
+ * State of the add/edit modal. Opening it for a new item clears both forms, so switching tabs
+ * never shows leftovers from an item opened earlier.
  */
 export function useItemModal(accentColor: string) {
   const [isOpen, setIsOpen] = useState(false);
@@ -34,14 +34,15 @@ export function useItemModal(accentColor: string) {
     patchTaskForm: (patch: Partial<TaskForm>) => setTaskForm(f => ({ ...f, ...patch })),
     switchTab: (next: ItemTab) => { setTab(next); setError(null); },
 
-    /** A blank task, or an event on `date` from 9 to 10. */
-    openNew(kind: ItemTab, date: string) {
-      if (kind === 'task') setTaskForm(emptyTaskForm(accentColor));
-      else setEventForm(newEventForm(date, '09:00', '10:00', accentColor));
+    /** A blank task or event: no date or times filled in. */
+    openNew(kind: ItemTab) {
+      setTaskForm(emptyTaskForm(accentColor));
+      setEventForm(newEventForm('', '', '', accentColor));
       show(kind);
     },
-    /** A new event for the hour that starts at `hour` on `date`. */
+    /** A new event for the hour that starts at `hour` on `date` (a click on the calendar). */
     openNewEventAt(date: string, hour: number) {
+      setTaskForm(emptyTaskForm(accentColor));
       setEventForm(eventFormAtHour(date, hour, accentColor));
       show('event');
     },

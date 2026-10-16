@@ -4,7 +4,7 @@ import { ChevronDown, CircleUserRound } from 'lucide-react';
 
 interface MenuItem {
   label: string;
-  /** Omitted for items that aren't built yet; they show greyed out. */
+  /** Omitted while the item can't be used (Google is busy); it shows greyed out. */
   onSelect?: () => void;
 }
 
@@ -24,7 +24,6 @@ export default function ProfileMenu({ googleConnected, googleBusy, onProfile, on
       ? { label: 'Sync Google Calendar', onSelect: google(onSyncGoogle) }
       : { label: 'Connect Google Calendar', onSelect: google(onConnectGoogle) },
     ...(googleConnected ? [{ label: 'Disconnect Google Calendar', onSelect: google(onDisconnectGoogle) }] : []),
-    { label: 'Preferences' }, { label: 'Notifications' }, { label: 'Help & Support' },
     { label: 'Sign out', onSelect: onSignOut },
   ];
 

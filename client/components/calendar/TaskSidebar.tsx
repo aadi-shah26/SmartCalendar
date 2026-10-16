@@ -1,7 +1,10 @@
-import { Pencil } from 'lucide-react';
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Pencil } from 'lucide-react';
 import { getTextColor } from '../../lib/calendar/colors';
 import { formatDeadline, formatDuration } from '../../lib/calendar/dates';
 import { byDeadline } from '../../lib/calendar/events';
+import type { ItemTab } from '../../lib/calendar/forms';
 import { describeAtRisk } from '../../lib/calendar/replanMessages';
 import { isActiveTask, type CheckIn, type PendingCheckIn } from '../../lib/calendar/tasks';
 import type { StatusMessage, Task, TaskSession } from '../../lib/calendar/types';
@@ -80,14 +83,63 @@ function TaskRow({ task, isCompleting, onOpen, onComplete }: {
   );
 }
 
+/** "+ New ▾": pick whether to add a task or an event. */
+function NewMenu({ accentColor, onNew }: { accentColor: string; onNew: (kind: ItemTab) => void }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const closeOnOutsideClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, [isOpen]);
+
+  const items: [string, ItemTab][] = [['Task', 'task'], ['Event', 'event']];
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setIsOpen(prev => !prev)}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '9px 16px', borderRadius: 10, border: 'none', background: accentColor, fontSize: 13, fontWeight: 700,
+          cursor: 'pointer', color: getTextColor(accentColor), boxShadow: '0 2px 8px rgba(0,0,0,0.12)', transition: 'transform 0.1s ease',
+        }}>
+        + New
+        <ChevronDown style={{ width: 14, height: 14 }} />
+      </button>
+      {isOpen && (
+        <div role="menu" style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', minWidth: 150, zIndex: 50, background: '#fff', border: '1px solid #e5e5e5', borderRadius: 12, boxShadow: '0 10px 24px rgba(0,0,0,0.12)', padding: 6 }}>
+          {items.map(([label, kind]) => (
+            <button
+              key={kind}
+              role="menuitem"
+              type="button"
+              onClick={() => { setIsOpen(false); onNew(kind); }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#f5f5f5'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+              style={{ width: '100%', textAlign: 'left', border: 'none', background: 'transparent', borderRadius: 8, padding: '8px 10px', fontSize: 13, color: '#1a1a1a', cursor: 'pointer' }}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TaskSidebar({
   tasks, accentColor, workPlan, planning, planMessage, createdMessage, completingTaskId, showUndo, atRisk, checkIns,
-  onNewTask, onPlanWeek, onOpenWorkPlan, onOpenTask, onCompleteTask, onUndoDelete, onCheckIn, onOpenSession,
+  onNew, onPlanWeek, onOpenWorkPlan, onOpenTask, onCompleteTask, onUndoDelete, onCheckIn, onOpenSession,
 }: {
   tasks: Task[]; accentColor: string; workPlan: WorkPlanSettings | null;
   planning: boolean; planMessage: StatusMessage | null; createdMessage: string | null;
   completingTaskId: string | null; showUndo: boolean; atRisk: AtRisk[]; checkIns: PendingCheckIn[];
-  onNewTask: () => void; onPlanWeek: () => void; onOpenWorkPlan: () => void;
+  onNew: (kind: ItemTab) => void; onPlanWeek: () => void; onOpenWorkPlan: () => void;
   onOpenTask: (t: Task) => void; onCompleteTask: (id: string) => void; onUndoDelete: () => void;
   onCheckIn: (taskId: string, session: TaskSession, change: CheckIn) => void;
   onOpenSession: (taskId: string, index: number) => void;
@@ -101,14 +153,7 @@ export default function TaskSidebar({
           <span style={{ fontWeight: 800, fontSize: 15, color: '#1a1a1a', letterSpacing: '-0.2px' }}>
             Tasks <span style={{ color: '#999', fontWeight: 600 }}>({activeTasks.length})</span>
           </span>
-          <button
-            onClick={onNewTask}
-            style={{
-              padding: '9px 16px', borderRadius: 10, border: 'none', background: accentColor, fontSize: 13, fontWeight: 700,
-              cursor: 'pointer', color: getTextColor(accentColor), boxShadow: '0 2px 8px rgba(0,0,0,0.12)', transition: 'transform 0.1s ease',
-            }}>
-            + New Task
-          </button>
+          <NewMenu accentColor={accentColor} onNew={onNew} />
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button

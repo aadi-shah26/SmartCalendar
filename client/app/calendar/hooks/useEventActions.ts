@@ -16,6 +16,7 @@ export function useEventActions({ events, setEvents, mirror }: {
   async function createEvent(form: EventForm): Promise<string | null> {
     if (!form.title.trim()) return 'Title is required.';
     if (!form.date) return 'Date is required.';
+    if (!form.start || !form.end) return 'Start and end time are required.';
     // Fetch the session fresh rather than trusting the cached userId state, which can go
     // stale (e.g. session changed in another tab) and get rejected by row-level security.
     const { data: { session } } = await supabase.auth.getSession();

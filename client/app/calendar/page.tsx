@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react';
 import { DEFAULT_WORK_PLAN } from '../../lib/scheduler';
 import type { ParsedItem } from '../../lib/nlp/parse';
 import { getTextColor } from '../../lib/calendar/colors';
-import { toDateKey } from '../../lib/calendar/dates';
 import { expandEvents, isTaskEventId, taskIdFromCalendarId } from '../../lib/calendar/events';
 import { pendingCheckIns } from '../../lib/calendar/tasks';
 import type { CalendarEvent, ViewMode } from '../../lib/calendar/types';
@@ -68,7 +67,7 @@ export default function CalendarPage() {
 
   // Quick add opens the matching form, prefilled, for the user to review and save.
   const reviewParsed = (item: ParsedItem) => {
-    modal.openNew(item.kind, toDateKey(currentDate));
+    modal.openNew(item.kind);
     if (item.kind === 'event') {
       modal.patchEventForm({
         title: item.title, description: item.description, date: item.date, start: item.startTime, end: item.endTime,
@@ -110,15 +109,6 @@ export default function CalendarPage() {
       <div style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid #e5e5e5', gap: 16 }}>
         <DateNavigator view={view} currentDate={currentDate} setCurrentDate={setCurrentDate} />
         <ViewSwitcher view={view} setView={setView} accentColor={accentColor} />
-        <button
-          onClick={() => { const now = new Date(); modal.openNewEventAt(toDateKey(now), Math.min(now.getHours() + 1, 23)); }}
-          style={{
-            padding: '8px 16px', borderRadius: 10, border: 'none', background: accentColor,
-            color: getTextColor(accentColor), fontSize: 13, fontWeight: 700, cursor: 'pointer',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.12)', whiteSpace: 'nowrap',
-          }}>
-          + New Event
-        </button>
         <QuickAddBar onParsed={reviewParsed} />
         <ProfileMenu
           googleConnected={google.connected}
@@ -153,7 +143,7 @@ export default function CalendarPage() {
           checkIns={checkIns}
           onCheckIn={planner.updateTaskSession}
           onOpenSession={showSession}
-          onNewTask={() => modal.openNew('task', toDateKey(currentDate))}
+          onNew={modal.openNew}
           onPlanWeek={() => planner.planWeek()}
           onOpenWorkPlan={() => planner.setShowWorkPlan(true)}
           onOpenTask={modal.openTask}
